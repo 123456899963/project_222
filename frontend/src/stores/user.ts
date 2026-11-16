@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import request from '@/api/request'
-import type { User, LoginPayload, RegisterPayload } from '@/types'
+import { computed, ref } from 'vue'
+import * as authApi from '@/api/auth'
+import type { LoginPayload, RegisterPayload, User } from '@/types'
 
 /**
  * 用户登录态 Store
  * —— 登录状态由后端 HttpOnly Cookie 维护，前端只读；
- * —— localStorage 仅存当前用户基础信息（非敏感）。
+ * —— 页面刷新时调用 getMe() 校验 Cookie 是否仍然有效。
  */
 export const useUserStore = defineStore('user', () => {
   const user = ref<User | null>(null)
@@ -18,11 +18,8 @@ export const useUserStore = defineStore('user', () => {
   async function login(payload: LoginPayload) {
     loading.value = true
     try {
-      const res = await request.post('/auth/login', payload)
-      if (res.data) {
-        user.value = { id: res.data.user_id, username: res.data.username, role: 'user' }
-        localStorage.setItem('tea_user', JSON.stringify(user.value))
-      }
+      const res = await authApi.login(payload)
+      user.value = res.data
       return res
     } finally {
       loading.value = false
@@ -32,11 +29,9 @@ export const useUserStore = defineStore('user', () => {
   async function register(payload: RegisterPayload) {
     loading.value = true
     try {
-      const res = await request.post('/auth/register', payload)
-      if (res.data) {
-        user.value = { id: res.data.user_id, username: res.data.username, role: 'user' }
-        localStorage.setItem('tea_user', JSON.stringify(user.value))
-      }
+      const res = await authApi.register(payload)
+      // 注册成功后端自动登录并下发 Cookie
+      user.value = res.data
       return res
     } finally {
       loading.value = false
@@ -44,20 +39,20 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function logout() {
-    await request.post('/auth/logout')
-    user.value = null
-    localStorage.removeItem('tea_user')
+    try {
+      await authApi.logout()
+    } finally {
+      user.value = null
+    }
   }
 
-  /** 从 localStorage 恢复登录态（页面刷新时调用） */
-  function hydrate() {
-    const raw = localStorage.getItem('tea_user')
-    if (raw) {
-      try {
-        user.value = JSON.parse(raw)
-      } catch {
-        localStorage.removeItem('tea_user')
-      }
+  /** 页面刷新时校验当前 Cookie 是否仍然有效（401 则清空本地态）。 */
+  async function hydrate() {
+    try {
+      const res = await authApi.getMe()
+      user.value = res.data
+    } catch {
+      user.value = null
     }
   }
 

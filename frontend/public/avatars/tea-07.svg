@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="预置头像：祥云">
+  <circle cx="100" cy="100" r="100" fill="#F5F2E6"/>
+  <path d="M62 112c-8 0-14-6-14-13s6-13 13-13c2-10 11-17 21-17 9 0 17 5 20 13 2-1 4-1 6-1 9 0 16 7 16 16s-7 15-16 15z" fill="#A8A05C" opacity=".3"/>
+  <path d="M62 112c-8 0-14-6-14-13s6-13 13-13c2-10 11-17 21-17 9 0 17 5 20 13 2-1 4-1 6-1 9 0 16 7 16 16s-7 15-16 15z" stroke="#A8A05C" stroke-width="4" fill="none" stroke-linejoin="round"/>
+  <path d="M78 134h48" stroke="#A8A05C" stroke-width="4" stroke-linecap="round" opacity=".55"/>
+</svg>

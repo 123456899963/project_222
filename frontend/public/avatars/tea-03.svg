@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="预置头像：远山">
+  <circle cx="100" cy="100" r="100" fill="#EFF2F0"/>
+  <path d="M42 126l30-34 22 24 18-22 26 32z" fill="#6E7F8D" opacity=".28"/>
+  <path d="M42 126l30-34 22 24" stroke="#6E7F8D" stroke-width="4" fill="none" stroke-linejoin="round"/>
+  <path d="M126 114l14-18 18 22" stroke="#6E7F8D" stroke-width="4" fill="none" stroke-linejoin="round"/>
+  <path d="M50 138h100" stroke="#6E7F8D" stroke-width="4" stroke-linecap="round" opacity=".6"/>
+</svg>

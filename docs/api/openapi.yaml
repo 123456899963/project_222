@@ -1,0 +1,4247 @@
+openapi: 3.0.3
+
+info:
+  title: 茶·图鉴 API
+  version: 1.6.0
+  description: |
+    七大茶类结构化知识库平台 MVP 后端接口契约。
+
+    统一约定：
+    - 所有业务接口位于 `/api/v1` 下。
+    - 统一响应体为 `{ code, message, data }`，`code=0` 表示成功。
+    - 认证使用 HttpOnly Cookie `tea_session`（30 天），不使用 Bearer Token。
+    - 分页默认 `page_size=12`，最大 50，越界自动夹取。
+    - 时间统一为 ISO 8601 UTC，秒级，带 `Z`。
+    - 图片上传仅管理员可用，返回同源相对路径 `/uploads/YYYY/MM/{uuid}.{ext}`。
+
+    详细字段、权限与错误说明见 `docs/api/API_CONTRACT.md`。
+
+servers:
+  - url: /api/v1
+    description: 同源部署（开发期经 Vite 代理，生产期经 Nginx 反向代理）
+
+tags:
+  - name: 认证
+    description: 注册、登录、退出、当前用户
+  - name: 我的
+    description: 当前用户统计与等级
+  - name: 茶品
+    description: 列表筛选、分页、详情与首页数据
+  - name: 收藏
+    description: 收藏与取消收藏
+  - name: 清单
+    description: 我的默认清单、标题与品鉴笔记
+  - name: 分享
+    description: 分享链接生成、撤销、游客查看、一键收藏
+  - name: 管理员
+    description: 茶品维护、上下架、小贴士、统计与图片上传
+
+paths:
+  /auth/username-availability:
+    get:
+      tags: [认证]
+      summary: 用户名可用性查询
+      description: PRD FR-4.1 实时唯一校验；已占用时返回 `available=false`，不是错误。
+      operationId: checkUsernameAvailability
+      security: []
+      parameters:
+        - name: username
+          in: query
+          required: true
+          description: 3–20 字符，中文/英文/数字；服务端 trim
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 20
+            pattern: '^[A-Za-z0-9\u4e00-\u9fa5]{3,20}$'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsernameAvailabilityEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/register:
+    post:
+      tags: [认证]
+      summary: 用户注册
+      description: 注册成功即自动登录并下发 30 天 HttpOnly Cookie `tea_session`。
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: 注册成功并自动登录
+          headers:
+            Set-Cookie:
+              description: tea_session 签名 Cookie，Max-Age=2592000，HttpOnly，SameSite=Lax
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/UsernameExists'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/login:
+    post:
+      tags: [认证]
+      summary: 用户登录
+      description: 管理员与普通用户使用同一登录入口；失败统一提示用户名或密码错误。
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          headers:
+            Set-Cookie:
+              description: tea_session 签名 Cookie，Max-Age=2592000，HttpOnly，SameSite=Lax
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/BadCredentials'
+        '429':
+          $ref: '#/components/responses/TooManyAttempts'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/logout:
+    post:
+      tags: [认证]
+      summary: 退出登录
+      description: 删除 tea_session Cookie；携带有效会话时服务端递增 session_version 吊销该用户全部旧 Cookie（40100）；未登录调用也返回成功（幂等）。
+      operationId: logout
+      security:
+        - {}
+        - teaSession: []
+      responses:
+        '200':
+          description: 退出成功
+          headers:
+            Set-Cookie:
+              description: tea_session=; Max-Age=0
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/me:
+    get:
+      tags: [认证]
+      summary: 获取当前用户信息
+      description: 从 Cookie 会话解析用户；角色实时读取 users.role。
+      operationId: getCurrentUser
+      security:
+        - teaSession: []
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/password:
+    put:
+      tags: [认证]
+      summary: 修改密码
+      description: |
+        登录用户自助修改密码（API_CONTRACT §4.1.6）。成功后更新 password_hash 并将
+        users.session_version + 1，该用户所有旧 Cookie（sv 不匹配）立即失效；响应清除当前 Cookie。
+      operationId: changePassword
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: 修改成功
+          headers:
+            Set-Cookie:
+              description: tea_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          description: 未登录/会话已失效（40100）或当前密码错误（40110）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                unauthorized:
+                  summary: 未登录或会话已失效
+                  value:
+                    code: 40100
+                    message: 未登录或登录已过期
+                    data: null
+                badCredentials:
+                  summary: 当前密码错误
+                  value:
+                    code: 40110
+                    message: 用户名或密码错误
+                    data: null
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /me/stats:
+    get:
+      tags: [我的]
+      summary: 用户统计与等级（S15）
+      description: |
+        实时聚合收藏数、非空笔记数与生效分享数，并按收藏数计算四档等级：
+        茶客 0–4 / 茶友 5–19 / 茶人 20–49 / 茶师 ≥50。
+      operationId: getMyStats
+      security:
+        - teaSession: []
+      responses:
+        '200':
+          description: 用户统计与等级
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserStatsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /me/avatar:
+    post:
+      tags: [我的]
+      summary: 上传头像（ADR-0004）
+      description: |
+        登录用户；multipart/form-data 字段名固定为 file。
+        限制 5 MB，允许 JPEG/PNG/WebP，校验魔数，UUID 落盘至 uploads/YYYY/MM/。
+        返回更新后的 User（含 avatar_url）；写入 operation_logs(avatar_update)。
+      operationId: uploadMyAvatar
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: 更新后的当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [我的]
+      summary: 选择预置头像（ADR-0004）
+      description: |
+        登录用户；preset 白名单 tea-01～tea-08，映射到前端静态资源 /avatars/<preset>.svg。
+        返回更新后的 User；写入 operation_logs(avatar_update)。
+      operationId: setMyAvatarPreset
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [preset]
+              properties:
+                preset:
+                  type: string
+                  enum: [tea-01, tea-02, tea-03, tea-04, tea-05, tea-06, tea-07, tea-08]
+      responses:
+        '200':
+          description: 更新后的当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas:
+    get:
+      tags: [茶品]
+      summary: 茶品列表（筛选、排序、分页）
+      description: |
+        仅返回 `is_active=1` 的茶品。
+        不同维度之间默认为 AND（`filter_mode=or` 时茶类/产地/季节/发酵之间改为 OR）；同一维度逗号多选为 OR。
+        关键词始终独立 AND 叠加。
+        `origin` 使用省级名称并做前缀匹配。
+        价格筛选按区间交集匹配，未维护价格的茶品不命中。
+      operationId: listTeas
+      security: []
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: 逗号分隔茶类枚举，如 `green,oolong`
+          schema:
+            type: string
+            example: green,oolong
+        - name: origin
+          in: query
+          required: false
+          description: 逗号分隔省级名称，如 `浙江,福建`；对 teas.origin 做前缀匹配
+          schema:
+            type: string
+            example: 浙江,福建
+        - name: season
+          in: query
+          required: false
+          description: 逗号分隔采摘季节，如 `明前,春茶`
+          schema:
+            type: string
+            example: 明前,春茶
+        - name: fermentation
+          in: query
+          required: false
+          description: 逗号分隔发酵程度（S2），如 `不发酵,半发酵`
+          schema:
+            type: string
+            example: 不发酵,半发酵
+        - name: price_min
+          in: query
+          required: false
+          description: 价格下限（元/斤，S2），≥0；与 price_max 按区间交集匹配
+          schema:
+            type: integer
+            minimum: 0
+            example: 300
+        - name: price_max
+          in: query
+          required: false
+          description: 价格上限（元/斤，S2），≥0；同时提供时须满足 price_min ≤ price_max
+          schema:
+            type: integer
+            minimum: 0
+            example: 1000
+        - name: filter_mode
+          in: query
+          required: false
+          description: 跨维度组合方式（S1）；同维度内部始终 OR
+          schema:
+            type: string
+            enum: [and, or]
+            default: and
+        - name: keyword
+          in: query
+          required: false
+          description: 1–50 字符，对名称与产地做 LIKE 模糊匹配；空串忽略
+          schema:
+            type: string
+            maxLength: 50
+        - name: sort
+          in: query
+          required: false
+          description: 最新上架或收藏最多
+          schema:
+            type: string
+            enum: [newest, favorite]
+            default: newest
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/categories:
+    get:
+      tags: [茶品]
+      summary: 七大茶类计数
+      description: 固定返回七项，顺序固定，缺失茶类返回 0。
+      operationId: listTeaCategories
+      security: []
+      responses:
+        '200':
+          description: 七大茶类计数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryCountListEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/origins:
+    get:
+      tags: [茶品]
+      summary: 产地选项（省级）
+      description: 从 teas.origin 第一段派生省级名称并统计上架数量，按数量倒序。
+      operationId: listTeaOrigins
+      security: []
+      responses:
+        '200':
+          description: 省级产地列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OriginCountListEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/hot:
+    get:
+      tags: [茶品]
+      summary: 热门推荐
+      description: 全部上架茶品按收藏数倒序、创建时间倒序取前 N；PRD FR-2.2 固定展示前 8。
+      operationId: listHotTeas
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: 默认 8；小于 1 按 1，大于 20 按 20
+          schema:
+            type: integer
+            default: 8
+      responses:
+        '200':
+          description: 热门茶品卡片
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaListItemListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/random:
+    get:
+      tags: [茶品]
+      summary: 随机发现
+      description: 从全部上架茶品中随机取 1 条；无数据时 data 为 null。
+      operationId: getRandomTea
+      security: []
+      parameters:
+        - name: exclude_id
+          in: query
+          required: false
+          description: 排除的茶品 ID，用于“换一批”
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 随机茶品详情或 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaRandomEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/recommended:
+    get:
+      tags: [茶品]
+      summary: 个性化推荐（S16）
+      description: |
+        登录且有收藏时按收藏茶类分布加权随机，优先返回未收藏的同茶类茶品；
+        未登录、无收藏或候选耗尽时回退完全随机；仅返回上架茶品。
+      operationId: listRecommendedTeas
+      security:
+        - {}
+        - teaSession: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数 1–8，越界夹取
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+            maximum: 8
+        - name: exclude_id
+          in: query
+          required: false
+          description: 排除指定茶品（首页“换一款”）；不存在或已下架时忽略
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 推荐茶品列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaListItemListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/{tea_id}:
+    get:
+      tags: [茶品]
+      summary: 茶品详情
+      description: 返回完整结构化字段与四个扁平小贴士字段；下架茶品返回 40401。
+      operationId: getTeaDetail
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 茶品详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaDetailEnvelope'
+        '404':
+          $ref: '#/components/responses/TeaNotFoundOrOffShelf'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/{tea_id}/images:
+    get:
+      tags: [茶品]
+      summary: 茶品图片集
+      description: |
+        返回该茶品图片集（按 sort_order 升序、id 升序），游客可访问。
+        下架茶品返回 40401；无图片时返回空数组。
+      operationId: getTeaImages
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 图片集列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaMediaListEnvelope'
+        '404':
+          $ref: '#/components/responses/TeaNotFoundOrOffShelf'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /teas/{tea_id}/related:
+    get:
+      tags: [茶品]
+      summary: 相关推荐（S6）
+      description: |
+        排除自身与下架茶品；同茶类优先 → 同产地（省级）次之 → 热门兜底，结果去重。
+      operationId: getRelatedTeas
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数 1–8，越界夹取
+          schema:
+            type: integer
+            default: 4
+            minimum: 1
+            maximum: 8
+      responses:
+        '200':
+          description: 相关茶品列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaListItemListEnvelope'
+        '404':
+          $ref: '#/components/responses/TeaNotFoundOrOffShelf'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /tips/latest:
+    get:
+      tags: [小贴士]
+      summary: 最新小贴士（S7）
+      description: |
+        按 tea_tips.updated_at 倒序返回限量的茶品小贴士摘要，仅包含 is_active=1 的茶品。
+      operationId: getLatestTips
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数 1–6，越界夹取
+          schema:
+            type: integer
+            default: 3
+            minimum: 1
+            maximum: 6
+      responses:
+        '200':
+          description: 最新小贴士列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestTipListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /favorites/{tea_id}:
+    post:
+      tags: [收藏]
+      summary: 收藏茶品
+      description: |
+        幂等。可选请求体指定目标清单，缺省归入默认清单。
+        同一用户对同一茶品跨清单只计 1 次 favorite_count（首次收藏 +1）。
+      operationId: addFavorite
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FavoriteAddRequest'
+      responses:
+        '200':
+          description: 收藏状态与最新计数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStateEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 茶品不存在（40400）、已下架（40401）或清单不存在/越权（40420）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [收藏]
+      summary: 取消收藏
+      description: |
+        幂等。不传 list_id 时移除该茶在所有清单中的条目；传入时仅移除指定清单条目。
+        不校验 is_active，允许移除已下架茶品；仅最后一条移除时才递减 favorite_count。
+      operationId: removeFavorite
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+        - name: list_id
+          in: query
+          required: false
+          description: 指定清单；缺省表示移除该茶在所有清单中的条目
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 取消后的收藏状态与最新计数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStateEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 茶品不存在（40400）或清单不存在/越权（40420）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /favorites/{tea_id}/status:
+    get:
+      tags: [收藏]
+      summary: 查询收藏状态
+      description: 允许查询已下架茶品，用于清单占位场景。
+      operationId: getFavoriteStatus
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 收藏状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoriteStateEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /lists:
+    get:
+      tags: [清单]
+      summary: 获取我的全部清单
+      description: |
+        首次调用自动创建默认清单（标题“我的收藏”），幂等。
+        返回摘要列表，默认清单置顶，其余按创建时间升序。
+      operationId: getMyLists
+      security:
+        - teaSession: []
+      responses:
+        '200':
+          description: 我的清单摘要列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSummaryListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [清单]
+      summary: 新建清单
+      description: 标题 trim 后 2–20 字符；单账号最多 10 个清单（含默认清单）。
+      operationId: createList
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListCreateRequest'
+      responses:
+        '200':
+          description: 新建的清单摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSummaryEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /lists/{list_id}:
+    get:
+      tags: [清单]
+      summary: 获取清单详情
+      description: 返回全部条目（不分页），含私有品鉴笔记与下架占位标记。
+      operationId: getListDetail
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ListIdPath'
+      responses:
+        '200':
+          description: 清单详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ListNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [清单]
+      summary: 更新清单标题
+      description: 默认与非默认清单均可改名；标题会同步用于分享页展示。
+      operationId: updateListTitle
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ListIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitleUpdateRequest'
+      responses:
+        '200':
+          description: 更新后的标题
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTitleEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ListNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [清单]
+      summary: 删除清单
+      description: |
+        仅非默认清单可删除；条目迁移到默认清单，重复茶合并且默认笔记优先。
+        该清单的分享令牌随清单级联删除，旧链接立即返回 40410。
+      operationId: deleteList
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ListIdPath'
+      responses:
+        '200':
+          description: 删除成功，data 为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ListNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /lists/{list_id}/notes/{tea_id}:
+    put:
+      tags: [清单]
+      summary: 保存品鉴笔记
+      description: |
+        私有笔记写入 favorite_items.tasting_note；仅本人可读写，分享接口不返回。
+        content 为 null 或纯空白时清空笔记，不删除收藏条目。
+      operationId: saveTastingNote
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ListIdPath'
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteUpdateRequest'
+      responses:
+        '200':
+          description: 保存后的笔记
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 清单不存在/越权（40420）或茶品不在该清单（40430）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /shares/generate:
+    post:
+      tags: [分享]
+      summary: 生成分享链接
+      description: |
+        清单已有生效令牌则复用并返回 is_new=false；否则新建 8 位大小写敏感短码。
+        标题取 collection_lists.title，不接收 title。
+        可选请求体 list_id 指定清单，缺省使用默认清单。
+      operationId: generateShare
+      security:
+        - teaSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareGenerateRequest'
+      responses:
+        '200':
+          description: 分享令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareGenerateEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ListNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /shares/revoke/{token}:
+    post:
+      tags: [分享]
+      summary: 撤销分享
+      description: 软失效 is_active=0 + revoked_at；撤销不可逆，旧链接不可复活。
+      operationId: revokeShare
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ShareTokenPath'
+      responses:
+        '200':
+          description: 撤销结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareRevokeEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ShareNotFound'
+        '409':
+          $ref: '#/components/responses/ShareRevoked'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /shares/{token}:
+    get:
+      tags: [分享]
+      summary: 查看公开分享清单
+      description: |
+        无需登录即可只读查看；若携带 Cookie 则计算 is_owner。
+        不返回品鉴笔记。已撤销分享返回 200 且 revoked=true、items=[]。
+      operationId: viewSharedList
+      security:
+        - {}
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ShareTokenPath'
+      responses:
+        '200':
+          description: 分享内容或已撤销状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareViewEnvelope'
+        '404':
+          $ref: '#/components/responses/ShareNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /shares/{token}/copy:
+    post:
+      tags: [分享]
+      summary: 一键收藏全部
+      description: |
+        仅登录用户可执行，且不能是清单所有者。只收藏在架茶品，已收藏与下架条目计入 skipped。
+        差集批量插入并同事务递增 favorite_count。
+      operationId: copySharedList
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ShareTokenPath'
+      responses:
+        '200':
+          description: 收藏结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareCopyEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ShareNotFound'
+        '409':
+          $ref: '#/components/responses/ShareRevoked'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas:
+    get:
+      tags: [管理员]
+      summary: 茶品列表（管理视角）
+      description: 包含下架茶品，支持按上架状态过滤；分页默认 12。
+      operationId: adminListTeas
+      security:
+        - teaSession: []
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: 逗号分隔茶类枚举
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          required: false
+          description: 1–50 字符，匹配名称/产地
+          schema:
+            type: string
+            maxLength: 50
+        - name: is_active
+          in: query
+          required: false
+          description: 省略为全部；true 只看上架；false 只看下架
+          schema:
+            type: boolean
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [newest, favorite]
+            default: newest
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 管理分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTeaListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [管理员]
+      summary: 新增茶品
+      description: |
+        必填字段由前后端双重校验，后端为准。创建后默认上架、favorite_count=0。
+        可选 tips_* 同时创建小贴士。写入 operation_logs(create_tea)。
+      operationId: adminCreateTea
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeaCreateRequest'
+      responses:
+        '200':
+          description: 新建的茶品详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaDetailEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}:
+    get:
+      tags: [管理员]
+      summary: 茶品详情（管理视角）
+      description: 下架茶品仍可查看与编辑，因此不返回 40401。
+      operationId: adminGetTeaDetail
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 茶品详情（可能包含下架状态）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaDetailEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [管理员]
+      summary: 编辑茶品
+      description: |
+        PUT 全量替换茶品主体字段；省略的选填字段写为 NULL。
+        不接受 tips_*；小贴士走 PUT /admin/teas/{tea_id}/tips。
+        不可修改 id、is_active、favorite_count。写入 operation_logs(update_tea)。
+      operationId: adminUpdateTea
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeaUpdateRequest'
+      responses:
+        '200':
+          description: 更新后的茶品详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaDetailEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}/toggle:
+    patch:
+      tags: [管理员]
+      summary: 茶品上下架
+      description: |
+        无请求体，每次调用翻转当前 is_active。
+        下架为软失效：前台隐藏、清单保留灰显、分享标记不可用、计数不重置。
+        写入 operation_logs(toggle_tea)。
+      operationId: adminToggleTea
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 切换后的状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToggleEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}/brewing-guide:
+    put:
+      tags: [管理员]
+      summary: 整篇保存冲泡教程（ADR-0005）
+      description: |
+        3–8 步整篇覆盖；教程不存在时创建，存在时覆盖，不做局部合并。
+        可选字段省略按 null 处理。写入 operation_logs(update_brewing_guide)。
+      operationId: adminUpdateBrewingGuide
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrewingGuideUpdateRequest'
+      responses:
+        '200':
+          description: 保存后的教程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrewingGuideEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [管理员]
+      summary: 删除冲泡教程（ADR-0005）
+      description: |
+        幂等：教程不存在时返回 deleted=false。删除后公开详情 brewing_guide=null。
+        仅在确实删除时写入 operation_logs(delete_brewing_guide)。
+      operationId: adminDeleteBrewingGuide
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrewingGuideDeleteEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}/tips:
+    put:
+      tags: [管理员]
+      summary: 编辑官方小贴士
+      description: |
+        四个区块均可选：省略=保持原值；显式 null 或纯空白=清空。
+        tea_tips 无行时按本次提交 upsert。写入 operation_logs(update_tea)。
+      operationId: adminUpdateTeaTips
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TipsUpdateRequest'
+      responses:
+        '200':
+          description: 更新后的小贴士
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TipsEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/stats:
+    get:
+      tags: [管理员]
+      summary: 仪表盘统计
+      description: 总数/上架数/下架数与七大茶类分布；分布统计包含下架茶品。
+      operationId: adminGetStats
+      security:
+        - teaSession: []
+      responses:
+        '200':
+          description: 统计数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/operation-logs:
+    get:
+      tags: [管理员]
+      summary: 操作日志查询（API_CONTRACT §4.6.12）
+      description: |
+        仅管理员；按 created_at DESC, id DESC 分页。
+        admin_username 通过 LEFT JOIN users 获取，账号删除后 admin_id/admin_username 为 null。
+        ip_address 为预留字段（operation_logs 无该列），恒为 null。
+      operationId: adminListOperationLogs
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - name: page_size
+          in: query
+          required: false
+          description: 每页条数，默认 20；小于 1 按 1，大于 50 按 50
+          schema:
+            type: integer
+            default: 20
+        - name: action
+          in: query
+          required: false
+          description: 动作精确匹配
+          schema:
+            type: string
+          example: create_tea
+        - name: target_type
+          in: query
+          required: false
+          description: 目标类型精确匹配
+          schema:
+            type: string
+          example: tea
+        - name: admin_id
+          in: query
+          required: false
+          description: 操作人 users.id（对应 operation_logs.user_id）
+          schema:
+            type: integer
+            format: int64
+        - name: start_date
+          in: query
+          required: false
+          description: 起始日期 YYYY-MM-DD（含当天 00:00:00）
+          schema:
+            type: string
+            format: date
+          example: '2026-11-01'
+        - name: end_date
+          in: query
+          required: false
+          description: 结束日期 YYYY-MM-DD（含当天全天）
+          schema:
+            type: string
+            format: date
+          example: '2026-11-11'
+      responses:
+        '200':
+          description: 操作日志分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationLogPageEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/upload:
+    post:
+      tags: [管理员]
+      summary: 图片上传
+      description: |
+        仅管理员；multipart/form-data 字段名固定为 file。
+        限制 5 MB，允许 JPEG/PNG/WebP，校验魔数，UUID 落盘至 uploads/YYYY/MM/。
+        返回同源相对路径，可直接作为 main_image_url。
+        写入 operation_logs(upload_image)。
+      operationId: adminUploadImage
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: 上传结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/media/video:
+    post:
+      tags: [管理员]
+      summary: 视频上传
+      description: |
+        仅管理员；multipart/form-data 字段名固定为 file。
+        限制 50 MB，允许 MP4/MOV，校验 ISO BMFF `ftyp` 魔数；解析 `moov/mvhd` 时长，超过 180 秒拒绝。
+        UUID 落盘至 uploads/videos/YYYY/MM/，返回同源相对路径、原始文件名、大小与解析时长（秒）。
+        写入 operation_logs(upload_video)。请求体上限仅本端点放宽至 52 MB，其余端点仍为 6 MB。
+      operationId: adminUploadVideo
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: 上传结果（含服务端解析的时长）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoUploadEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}/images:
+    post:
+      tags: [管理员]
+      summary: 追加茶品图片
+      description: |
+        仅管理员；将一张已上传的图片关联到指定茶品图片集。
+        image_url 必须为本站 /uploads/ 路径；单茶最多 9 张，超出返回 40000。
+        sort_order 省略时自动取当前最大值 + 1。写入 operation_logs(add_tea_media)。
+      operationId: adminAddTeaImage
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeaMediaCreateRequest'
+      responses:
+        '200':
+          description: 新建的图片集条目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeaMediaEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/teas/{tea_id}/images/{image_id}:
+    delete:
+      tags: [管理员]
+      summary: 删除茶品图片
+      description: |
+        仅管理员；物理删除 tea_media 行，磁盘文件保留（可能被多茶复用）。
+        image_id 不属于该茶时返回 40400。写入 operation_logs(delete_tea_media)。
+      operationId: adminDeleteTeaImage
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/TeaIdPath'
+        - $ref: '#/components/parameters/ImageIdPath'
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletedEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TeaNotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /contributions:
+    post:
+      tags: [贡献]
+      summary: 提交新茶 / 科普投稿（S10 / S11）
+      description: |
+        登录用户提交贡献，落库为 pending，等待管理员审核。
+        new_tea：名品-茶类映射校验 + 名称相似度查重；article：目标茶品须已上架。
+        不接受富文本与图片上传（X7）。
+      operationId: createContribution
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContributionCreateRequest'
+      responses:
+        '200':
+          description: 提交成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionItemEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /contributions/mine:
+    get:
+      tags: [贡献]
+      summary: 我的提交记录（S13）
+      description: 仅返回当前用户记录，按提交时间倒序；含状态与拒绝理由。
+      operationId: listMyContributions
+      security:
+        - teaSession: []
+      responses:
+        '200':
+          description: 提交记录数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /contributions/{contribution_id}:
+    delete:
+      tags: [贡献]
+      summary: 删除待审核提交（S13）
+      description: 仅本人且仅 pending 可删除；已处理记录保留审计。
+      operationId: deleteContribution
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ContributionIdPath'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 提交不存在或不属于当前用户（code=40440）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/contributions:
+    get:
+      tags: [管理员]
+      summary: 审核队列（S12）
+      description: 默认待审核；按状态与类型过滤，时间倒序，附提交者用户名。
+      operationId: adminListContributions
+      security:
+        - teaSession: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+            default: pending
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [new_tea, article]
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 审核队列分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionPageEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/contributions/{contribution_id}/approve:
+    post:
+      tags: [管理员]
+      summary: 审核通过（S12）
+      description: |
+        仅 pending 可操作。new_tea 按 payload 创建并上架茶品（附 tips_*）；
+        article 通过后出现在茶品详情 contributed_articles。写入 operation_logs。
+      operationId: adminApproveContribution
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ContributionIdPath'
+      responses:
+        '200':
+          description: 审核结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionItemEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 提交记录不存在（code=40440）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/contributions/{contribution_id}/reject:
+    post:
+      tags: [管理员]
+      summary: 审核拒绝（S12）
+      description: 仅 pending 可操作；理由 1–200 字，回传用户端“我的提交”。
+      operationId: adminRejectContribution
+      security:
+        - teaSession: []
+      parameters:
+        - $ref: '#/components/parameters/ContributionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContributionRejectRequest'
+      responses:
+        '200':
+          description: 拒绝结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionItemEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 提交记录不存在（code=40440）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  # —— 批次五 R1–R5 内容板块 ——
+
+  /content-types:
+    get:
+      tags: [内容板块]
+      summary: 板块分类列表（API_CONTRACT §4.2.10）
+      description: 全量返回 5 个板块分类；游客可访问。
+      operationId: listContentTypes
+      responses:
+        '200':
+          description: 5 个板块
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentTypeListEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /contents:
+    get:
+      tags: [内容板块]
+      summary: 内容列表（API_CONTRACT §4.2.11）
+      description: 按板块筛选（type code）+ 分页；仅返回 is_active=1 的条目；游客可访问。
+      operationId: listContents
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [teaware, origin, culture, brand, knowledge]
+          description: 板块 code
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+          description: 关键词，匹配 title / summary；通配符按字面量转义
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+      responses:
+        '200':
+          description: 分页内容列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /contents/{item_id}:
+    get:
+      tags: [内容板块]
+      summary: 内容详情（API_CONTRACT §4.2.11 GET）
+      description: 仅返回 is_active=1 的条目；游客可访问。
+      operationId: getContent
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 内容详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentItemEnvelope'
+        '404':
+          description: 内容不存在（code=40460）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/contents:
+    get:
+      tags: [管理员]
+      summary: 后台内容列表（API_CONTRACT §4.6.12 GET）
+      description: 含下架条目；板块 + 状态双筛选；仅管理员可访问。
+      operationId: adminListContents
+      security:
+        - teaSession: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [teaware, origin, culture, brand, knowledge]
+        - name: is_active
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+      responses:
+        '200':
+          description: 后台分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminContentListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [管理员]
+      summary: 创建内容条目（API_CONTRACT §4.6.12 POST）
+      description: 创建后 is_active=1；operation_logs 同步留痕。
+      operationId: adminCreateContent
+      security:
+        - teaSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentCreateRequest'
+      responses:
+        '200':
+          description: 创建结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentItemEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /admin/contents/{item_id}:
+    get:
+      tags: [管理员]
+      summary: 后台内容详情（API_CONTRACT §4.9.5）
+      description: 编辑回填用途；含下架条目，is_active 返回真实状态；仅管理员可访问。
+      operationId: adminGetContent
+      security:
+        - teaSession: []
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 后台内容详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentItemEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 条目不存在（code=40460）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [管理员]
+      summary: 更新内容条目（全量替换；API_CONTRACT §4.6.13 PUT）
+      description: is_active 字段可切换上架/下架；operation_logs 同步留痕。
+      operationId: adminUpdateContent
+      security:
+        - teaSession: []
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentUpdateRequest'
+      responses:
+        '200':
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentItemEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 条目不存在（code=40460）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [管理员]
+      summary: 软删除（is_active=0；API_CONTRACT §4.6.13 DELETE）
+      description: 不物理删除；operation_logs 同步留痕。
+      operationId: adminDeleteContent
+      security:
+        - teaSession: []
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 软删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoolEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 条目不存在（code=40460）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    teaSession:
+      type: apiKey
+      in: cookie
+      name: tea_session
+      description: HttpOnly 签名 Cookie，30 天有效；不使用 Bearer Token。
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      required: false
+      description: 页码，默认 1；小于 1 时按 1 处理
+      schema:
+        type: integer
+        default: 1
+    PageSizeParam:
+      name: page_size
+      in: query
+      required: false
+      description: 每页条数，默认 12（PRD FR-1.6）；小于 1 按 1，大于 50 按 50
+      schema:
+        type: integer
+        default: 12
+    TeaIdPath:
+      name: tea_id
+      in: path
+      required: true
+      description: 茶品主键
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ImageIdPath:
+      name: image_id
+      in: path
+      required: true
+      description: 茶品图片集条目主键（tea_media.id）
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ListIdPath:
+      name: list_id
+      in: path
+      required: true
+      description: 收藏清单主键（collection_lists.id）
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ShareTokenPath:
+      name: token
+      in: path
+      required: true
+      description: 8 位 URL-safe 分享短码，大小写敏感
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{8}$'
+    ContributionIdPath:
+      name: contribution_id
+      in: path
+      required: true
+      description: 贡献提交主键（contributions.id）
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+
+  responses:
+    ValidationError:
+      description: 参数校验失败（code=40000）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40000
+            message: 参数校验失败
+            data: null
+    Unauthorized:
+      description: 未登录或登录已过期（code=40100）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40100
+            message: 未登录或登录已过期
+            data: null
+    BadCredentials:
+      description: 用户名或密码错误（code=40110）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40110
+            message: 用户名或密码错误
+            data: null
+    TooManyAttempts:
+      description: 登录失败次数过多，临时锁定（code=42900，S14）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 42900
+            message: 尝试过于频繁，请 15 分钟后再试
+            data: null
+    Forbidden:
+      description: 无权限执行此操作（code=40300）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40300
+            message: 无权限执行此操作
+            data: null
+    TeaNotFound:
+      description: 茶品不存在（code=40400）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40400
+            message: 茶品不存在
+            data: null
+    TeaNotFoundOrOffShelf:
+      description: 茶品不存在（40400）或已下架（40401）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            notFound:
+              summary: 茶品不存在
+              value:
+                code: 40400
+                message: 茶品不存在
+                data: null
+            offShelf:
+              summary: 茶品已下架
+              value:
+                code: 40401
+                message: 该茶品暂不可用
+                data: null
+    ShareNotFound:
+      description: 分享令牌不存在（code=40410）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40410
+            message: 该分享已被撤销或不存在
+            data: null
+    ListNotFound:
+      description: 清单不存在或不属于当前用户（code=40420）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40420
+            message: 清单不存在
+            data: null
+    FavoriteNotFound:
+      description: 收藏条目不存在（code=40430）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40430
+            message: 收藏条目不存在
+            data: null
+    ShareRevoked:
+      description: 分享已撤销（code=40900）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40900
+            message: 该分享已被撤销
+            data: null
+    UsernameExists:
+      description: 用户名已存在（code=40910）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 40910
+            message: 用户名已存在
+            data: null
+    FileTooLarge:
+      description: 上传文件超过 5 MB（code=41300）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 41300
+            message: 上传文件超过大小限制
+            data: null
+    UnsupportedMedia:
+      description: 不支持的文件类型（code=41500）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 41500
+            message: 不支持的文件类型
+            data: null
+    ServerError:
+      description: 服务器内部错误（code=50000）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            code: 50000
+            message: 服务器内部错误
+            data: null
+
+  schemas:
+    ApiEnvelope:
+      type: object
+      description: 统一响应体；data 结构由具体接口决定
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: 0 表示成功，非 0 为业务错误码
+          example: 0
+        message:
+          type: string
+          example: ok
+        data:
+          nullable: true
+
+    EmptyEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: ok
+        data:
+          nullable: true
+          example: null
+
+    ErrorEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          format: int32
+          example: 40000
+        message:
+          type: string
+          example: 参数校验失败
+        data:
+          nullable: true
+          example: null
+
+    User:
+      type: object
+      required: [id, username, role, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12
+        username:
+          type: string
+          example: teafan
+        role:
+          type: string
+          enum: [user, admin]
+          example: user
+        avatar_url:
+          type: string
+          nullable: true
+          description: 头像地址：/uploads/...（上传）或 /avatars/tea-0X.svg（预置）；未设置为 null
+          example: /avatars/tea-03.svg
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+
+    UserEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/User'
+
+    UserLevel:
+      type: object
+      required: [name, index, next_name, next_threshold, remaining]
+      properties:
+        name:
+          type: string
+          enum: [茶客, 茶友, 茶人, 茶师]
+          example: 茶友
+        index:
+          type: integer
+          minimum: 1
+          maximum: 4
+          example: 2
+        next_name:
+          type: string
+          nullable: true
+          example: 茶人
+        next_threshold:
+          type: integer
+          nullable: true
+          example: 20
+        remaining:
+          type: integer
+          example: 8
+
+    UserStats:
+      type: object
+      required: [favorite_count, note_count, share_count, level]
+      properties:
+        favorite_count:
+          type: integer
+          example: 12
+        note_count:
+          type: integer
+          example: 3
+        share_count:
+          type: integer
+          example: 1
+        level:
+          $ref: '#/components/schemas/UserLevel'
+
+    UserStatsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/UserStats'
+
+    UsernameAvailability:
+      type: object
+      required: [username, available]
+      properties:
+        username:
+          type: string
+          example: teafan
+        available:
+          type: boolean
+          example: true
+
+    UsernameAvailabilityEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/UsernameAvailability'
+
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 20
+          pattern: '^[A-Za-z0-9\u4e00-\u9fa5]{3,20}$'
+          example: teafan
+        password:
+          type: string
+          minLength: 6
+          maxLength: 64
+          example: tea2026
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 32
+          example: admin
+        password:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: admin123
+
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: tea2026
+        new_password:
+          type: string
+          minLength: 6
+          maxLength: 64
+          description: 规则与注册一致；不得与 old_password 相同（40000）
+          example: tea2027
+
+    TeaCategory:
+      type: string
+      enum: [green, white, yellow, red, oolong, dark, reprocessed]
+
+    TeaSeason:
+      type: string
+      enum: [明前, 雨前, 春茶, 夏茶, 秋茶, 冬茶]
+
+    TeaFermentation:
+      type: string
+      enum: [不发酵, 微发酵, 半发酵, 全发酵, 后发酵]
+
+    TeaListItem:
+      type: object
+      required: [id, name, category, origin, season, main_image_url, favorite_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          example: 浙江 杭州 西湖狮峰
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        main_image_url:
+          type: string
+          nullable: true
+          example: 'https://images.unsplash.com/photo-1563822249366-3efb23b8e0c9?w=600&h=400&fit=crop'
+        favorite_count:
+          type: integer
+          format: int64
+          description: teas.favorite_count 冗余计数缓存值
+          example: 2480
+
+    TeaDetail:
+      allOf:
+        - $ref: '#/components/schemas/TeaListItem'
+        - type: object
+          required:
+            - fermentation
+            - price_range
+            - representative_variety
+            - shape_desc
+            - soup_desc
+            - aroma_desc
+            - taste_desc
+            - water_temp
+            - tea_amount
+            - brew_time
+            - is_active
+            - created_at
+            - updated_at
+            - tips_history
+            - tips_suitable
+            - tips_misconception
+            - tips_official_note
+          properties:
+            fermentation:
+              nullable: true
+              allOf:
+                - $ref: '#/components/schemas/TeaFermentation'
+            price_range:
+              type: string
+              nullable: true
+              maxLength: 32
+            price_min:
+              type: integer
+              nullable: true
+              minimum: 0
+              description: 价格下限（元/斤，S2）；null 表示未维护
+              example: 300
+            price_max:
+              type: integer
+              nullable: true
+              minimum: 0
+              description: 价格上限（元/斤，S2）
+              example: 1000
+            representative_variety:
+              type: string
+              nullable: true
+              maxLength: 100
+              example: 群体种
+            shape_desc:
+              type: string
+              example: 扁平光滑，色翠略黄，形似雀舌
+            soup_desc:
+              type: string
+              example: 嫩绿明亮，清澈见底
+            aroma_desc:
+              type: string
+              example: 豆香清雅，热香馥郁，冷香幽兰
+            taste_desc:
+              type: string
+              example: 鲜爽甘醇，回甘明显，有淡淡的板栗香
+            water_temp:
+              type: number
+              format: float
+              nullable: true
+              minimum: 70
+              maximum: 100
+              example: 85.0
+            tea_amount:
+              type: number
+              format: float
+              nullable: true
+              minimum: 0
+              maximum: 999.9
+              example: 3.0
+            brew_time:
+              type: number
+              format: float
+              nullable: true
+              minimum: 0
+              maximum: 999.9
+              example: 90.0
+            is_active:
+              type: boolean
+              description: 公开详情恒为 true；管理员详情可能为 false
+              example: true
+            created_at:
+              type: string
+              format: date-time
+              example: '2026-11-06T12:00:00Z'
+            updated_at:
+              type: string
+              format: date-time
+              example: '2026-11-06T12:00:00Z'
+            tips_history:
+              type: string
+              nullable: true
+            tips_suitable:
+              type: string
+              nullable: true
+            tips_misconception:
+              type: string
+              nullable: true
+            tips_official_note:
+              type: string
+              nullable: true
+            brewing_guide:
+              nullable: true
+              allOf:
+                - $ref: '#/components/schemas/BrewingGuide'
+              description: 分步冲泡教程（ADR-0005）；null 表示未维护，前端退回三格速查卡
+            contributed_articles:
+              type: array
+              description: 已通过审核的用户科普投稿（S11/S12），按时间倒序；空数组隐藏
+              items:
+                $ref: '#/components/schemas/TeaArticle'
+            video_url:
+              type: string
+              nullable: true
+              maxLength: 500
+              description: 视频介绍地址，仅本站 /uploads/ 路径；null 表示无视频
+            video_duration:
+              type: integer
+              nullable: true
+              minimum: 1
+              maximum: 180
+              description: 视频时长（秒），由服务端解析
+            image_set:
+              type: array
+              description: 图片集 URL 列表（按 sort_order 升序），最多 9 张
+              items:
+                type: string
+
+    TeaDetailEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/TeaDetail'
+
+    TeaListData:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeaListItem'
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 12
+
+    TeaListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/TeaListData'
+
+    TeaListItemListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TeaListItem'
+
+    LatestTipItem:
+      type: object
+      required: [tea_id, tea_name, category, summary, updated_at]
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        tea_name:
+          type: string
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        summary:
+          type: string
+          description: 取官方备注→适合人群→历史→误区的首个非空项，超过 80 字截断加「…」
+          example: 采摘标准为一芽一叶或一芽二叶初展，炒制工艺独特。
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+
+    LatestTipListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/LatestTipItem'
+
+    CategoryCount:
+      type: object
+      required: [category, count]
+      properties:
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        count:
+          type: integer
+          example: 18
+
+    CategoryCountListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/CategoryCount'
+
+    OriginCount:
+      type: object
+      required: [origin, count]
+      properties:
+        origin:
+          type: string
+          description: 省级名称
+          example: 浙江
+        count:
+          type: integer
+          example: 8
+
+    OriginCountListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/OriginCount'
+
+    TeaListItemListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TeaListItem'
+
+    TeaRandomEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              nullable: true
+              allOf:
+                - $ref: '#/components/schemas/TeaDetail'
+
+    FavoriteState:
+      type: object
+      required: [tea_id, is_favorited, favorite_count, list_ids]
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        is_favorited:
+          type: boolean
+          example: true
+        favorite_count:
+          type: integer
+          format: int64
+          example: 2480
+        list_ids:
+          type: array
+          description: 该茶所在的当前用户全部清单 id（跨清单去重计数）
+          items:
+            type: integer
+            format: int64
+          example: [7, 9]
+
+    FavoriteAddRequest:
+      type: object
+      description: 可选请求体；不传或 list_id 为 null 时归入默认清单
+      properties:
+        list_id:
+          type: integer
+          format: int64
+          nullable: true
+          example: 7
+
+    FavoriteStateEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/FavoriteState'
+
+    ListItem:
+      type: object
+      required:
+        - tea_id
+        - name
+        - category
+        - origin
+        - season
+        - main_image_url
+        - favorite_count
+        - is_available
+        - tasting_note
+        - favorited_at
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          example: 浙江 杭州 西湖狮峰
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        main_image_url:
+          type: string
+          nullable: true
+        favorite_count:
+          type: integer
+          format: int64
+          example: 2480
+        is_available:
+          type: boolean
+          description: 派生自 teas.is_active；false 时前端灰显占位
+          example: true
+        tasting_note:
+          type: string
+          nullable: true
+          description: 私有品鉴笔记，仅清单所有者可见
+        favorited_at:
+          type: string
+          format: date-time
+          description: favorite_items.created_at
+          example: '2026-11-06T12:00:00Z'
+
+    ShareBrief:
+      type: object
+      required: [token, url, created_at]
+      properties:
+        token:
+          type: string
+          example: k7X9m2Qa
+        url:
+          type: string
+          example: /c/k7X9m2Qa
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+
+    ListSummary:
+      type: object
+      required: [id, title, is_default, tea_count, created_at, updated_at, share]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 7
+        title:
+          type: string
+          example: 我的收藏
+        is_default:
+          type: boolean
+          description: 是否默认清单（每用户唯一，不可删除）
+          example: true
+        tea_count:
+          type: integer
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        share:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ShareBrief'
+
+    ListSummaryEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListSummary'
+
+    ListSummaryListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ListSummary'
+
+    ListCreateRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 20
+          example: 办公室茶单
+
+    ListData:
+      type: object
+      required: [id, title, is_default, tea_count, created_at, updated_at, share, items]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 7
+        title:
+          type: string
+          example: 我的收藏
+        is_default:
+          type: boolean
+          description: 是否默认清单（每用户唯一，不可删除）
+          example: true
+        tea_count:
+          type: integer
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        share:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ShareBrief'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListItem'
+
+    ListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListData'
+
+    TitleUpdateRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 20
+          example: 我的私房茶单
+
+    ListTitleData:
+      type: object
+      required: [id, title, is_default, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 7
+        title:
+          type: string
+          example: 我的私房茶单
+        is_default:
+          type: boolean
+          example: true
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:30:00Z'
+
+    ListTitleEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListTitleData'
+
+    NoteUpdateRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          nullable: true
+          description: 为 null 或纯空白时清空笔记
+          example: 第一泡豆香突出，第三泡回甘明显。
+
+    NoteData:
+      type: object
+      required: [tea_id, list_id, tasting_note]
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        list_id:
+          type: integer
+          format: int64
+          example: 7
+        tasting_note:
+          type: string
+          nullable: true
+
+    NoteEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/NoteData'
+
+    ShareGenerateRequest:
+      type: object
+      description: 可选请求体；不传或 list_id 为 null 时使用默认清单
+      properties:
+        list_id:
+          type: integer
+          format: int64
+          nullable: true
+          example: 7
+
+    ShareGenerateData:
+      type: object
+      required: [token, url, created_at, is_new]
+      properties:
+        token:
+          type: string
+          example: k7X9m2Qa
+        url:
+          type: string
+          example: /c/k7X9m2Qa
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        is_new:
+          type: boolean
+          description: true 新建；false 复用已有生效令牌
+          example: true
+
+    ShareGenerateEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ShareGenerateData'
+
+    ShareRevokeData:
+      type: object
+      required: [token, is_active, revoked_at]
+      properties:
+        token:
+          type: string
+          example: k7X9m2Qa
+        is_active:
+          type: boolean
+          example: false
+        revoked_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:30:00Z'
+
+    ShareRevokeEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ShareRevokeData'
+
+    ShareViewItem:
+      type: object
+      required: [tea_id, name, category, origin, season, main_image_url, favorite_count, is_available]
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          example: 浙江 杭州 西湖狮峰
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        main_image_url:
+          type: string
+          nullable: true
+        favorite_count:
+          type: integer
+          format: int64
+          example: 2480
+        is_available:
+          type: boolean
+          example: true
+
+    ShareViewData:
+      type: object
+      required: [token, title, tea_count, created_at, revoked, is_owner, items]
+      properties:
+        token:
+          type: string
+          example: k7X9m2Qa
+        title:
+          type: string
+          example: 我的收藏
+        tea_count:
+          type: integer
+          description: 有效分享为条目总数；已撤销时为 0
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        revoked:
+          type: boolean
+          description: true 表示已撤销；此时 items 为空
+          example: false
+        is_owner:
+          type: boolean
+          description: 当前请求者是否为清单所有者；游客恒 false
+          example: false
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareViewItem'
+
+    ShareViewEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ShareViewData'
+
+    ShareCopyData:
+      type: object
+      required: [added, skipped, total]
+      properties:
+        added:
+          type: integer
+          example: 3
+        skipped:
+          type: integer
+          description: 已收藏 + 已下架不可收藏
+          example: 1
+        total:
+          type: integer
+          example: 4
+
+    ShareCopyEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ShareCopyData'
+
+    AdminTeaListItem:
+      type: object
+      required:
+        - id
+        - name
+        - category
+        - origin
+        - season
+        - main_image_url
+        - is_active
+        - favorite_count
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          example: 浙江 杭州 西湖狮峰
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        main_image_url:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+          example: true
+        favorite_count:
+          type: integer
+          format: int64
+          example: 2480
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:00:00Z'
+
+    AdminTeaListData:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminTeaListItem'
+        total:
+          type: integer
+          example: 6
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 12
+
+    AdminTeaListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/AdminTeaListData'
+
+    TeaCreateRequest:
+      type: object
+      required:
+        - name
+        - category
+        - origin
+        - shape_desc
+        - soup_desc
+        - aroma_desc
+        - taste_desc
+        - water_temp
+        - tea_amount
+        - brew_time
+        - main_image_url
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: 碧螺春
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: 江苏 苏州 洞庭山
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        fermentation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaFermentation'
+        price_range:
+          type: string
+          nullable: true
+          maxLength: 32
+          example: 100-500
+        representative_variety:
+          type: string
+          nullable: true
+          maxLength: 100
+          example: 群体种
+        shape_desc:
+          type: string
+          minLength: 1
+          example: 条索纤细，卷曲成螺，满披白毫
+        soup_desc:
+          type: string
+          minLength: 1
+          example: 嫩绿明亮
+        aroma_desc:
+          type: string
+          minLength: 1
+          example: 花果香浓郁
+        taste_desc:
+          type: string
+          minLength: 1
+          example: 鲜爽甘醇，回甘持久
+        water_temp:
+          type: number
+          format: float
+          minimum: 70
+          maximum: 100
+          multipleOf: 0.1
+          example: 80.0
+        tea_amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+          multipleOf: 0.1
+          example: 3.0
+        brew_time:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+          multipleOf: 0.1
+          example: 60.0
+        main_image_url:
+          type: string
+          maxLength: 500
+          pattern: '^(https?://|/uploads/)'
+          example: /uploads/2026/11/8f3c2b1a.jpg
+        tips_history:
+          type: string
+          nullable: true
+          example: 碧螺春产于苏州太湖洞庭山，已有千年历史。
+        tips_suitable:
+          type: string
+          nullable: true
+        tips_misconception:
+          type: string
+          nullable: true
+        tips_official_note:
+          type: string
+          nullable: true
+
+    TeaUpdateRequest:
+      type: object
+      description: PUT 全量替换茶品主体字段；不包含 tips_*，小贴士走独立接口
+      required:
+        - name
+        - category
+        - origin
+        - shape_desc
+        - soup_desc
+        - aroma_desc
+        - taste_desc
+        - water_temp
+        - tea_amount
+        - brew_time
+        - main_image_url
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: 西湖龙井
+        category:
+          $ref: '#/components/schemas/TeaCategory'
+        origin:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: 浙江 杭州 西湖狮峰
+        season:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaSeason'
+        fermentation:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TeaFermentation'
+        price_range:
+          type: string
+          nullable: true
+          maxLength: 32
+        representative_variety:
+          type: string
+          nullable: true
+          maxLength: 100
+        shape_desc:
+          type: string
+          minLength: 1
+        soup_desc:
+          type: string
+          minLength: 1
+        aroma_desc:
+          type: string
+          minLength: 1
+        taste_desc:
+          type: string
+          minLength: 1
+        water_temp:
+          type: number
+          format: float
+          minimum: 70
+          maximum: 100
+          multipleOf: 0.1
+        tea_amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+          multipleOf: 0.1
+        brew_time:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+          multipleOf: 0.1
+        main_image_url:
+          type: string
+          maxLength: 500
+          pattern: '^(https?://|/uploads/)'
+
+    TipsUpdateRequest:
+      type: object
+      description: 四个字段均可选；省略=保持原值，null/纯空白=清空
+      properties:
+        tips_history:
+          type: string
+          nullable: true
+        tips_suitable:
+          type: string
+          nullable: true
+        tips_misconception:
+          type: string
+          nullable: true
+        tips_official_note:
+          type: string
+          nullable: true
+
+    BrewingStep:
+      type: object
+      required: [title, detail]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 30
+          example: 温杯洁具
+        detail:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: 先用热水把茶具烫洗一遍并倒掉，提升杯温便于闻香。
+        tip:
+          type: string
+          nullable: true
+          maxLength: 100
+          example: 玻璃杯、盖碗或紫砂壶都可以。
+
+    BrewingGuide:
+      type: object
+      required: [steps]
+      properties:
+        intro:
+          type: string
+          nullable: true
+          maxLength: 200
+          example: 绿茶重在鲜爽，水温不宜过高，不闷盖、快出汤。
+        steps:
+          type: array
+          minItems: 3
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/BrewingStep'
+        caution:
+          type: string
+          nullable: true
+          maxLength: 500
+          example: 不要用刚烧开的沸水直冲，也不要盖盖子闷泡。
+
+    BrewingGuideUpdateRequest:
+      $ref: '#/components/schemas/BrewingGuide'
+
+    BrewingGuideData:
+      allOf:
+        - $ref: '#/components/schemas/BrewingGuide'
+        - type: object
+          required: [tea_id]
+          properties:
+            tea_id:
+              type: integer
+              format: int64
+              example: 1
+
+    BrewingGuideEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/BrewingGuideData'
+
+    BrewingGuideDeleteEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [tea_id, deleted]
+              properties:
+                tea_id:
+                  type: integer
+                  format: int64
+                  example: 1
+                deleted:
+                  type: boolean
+                  example: true
+
+    TipsData:
+      type: object
+      required: [tea_id, tips_history, tips_suitable, tips_misconception, tips_official_note]
+      properties:
+        tea_id:
+          type: integer
+          format: int64
+          example: 1
+        tips_history:
+          type: string
+          nullable: true
+        tips_suitable:
+          type: string
+          nullable: true
+        tips_misconception:
+          type: string
+          nullable: true
+        tips_official_note:
+          type: string
+          nullable: true
+
+    TipsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/TipsData'
+
+    ToggleData:
+      type: object
+      required: [id, is_active, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        is_active:
+          type: boolean
+          example: false
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-06T12:30:00Z'
+
+    ToggleEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ToggleData'
+
+    AdminStats:
+      type: object
+      required: [total_count, active_count, inactive_count, category_distribution]
+      properties:
+        total_count:
+          type: integer
+          example: 6
+        active_count:
+          type: integer
+          example: 6
+        inactive_count:
+          type: integer
+          example: 0
+        category_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryCount'
+
+    AdminStatsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/AdminStats'
+
+    OperationLogItem:
+      type: object
+      required:
+        - id
+        - action
+        - target_type
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        admin_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 操作人 users.id（对应 operation_logs.user_id），账号删除后为 null
+        admin_username:
+          type: string
+          nullable: true
+          description: LEFT JOIN users 获取；账号不存在时为 null
+        action:
+          type: string
+          example: create_tea
+        target_type:
+          type: string
+          example: tea
+        target_id:
+          type: integer
+          format: int64
+          nullable: true
+        detail:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+          description: 预留字段，operation_logs 无 IP 列，恒为 null
+        created_at:
+          type: string
+          format: date-time
+
+    OperationLogPageEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, page_size]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OperationLogItem'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                page_size:
+                  type: integer
+
+    UploadResult:
+      type: object
+      required: [url, original_filename, size, content_type]
+      properties:
+        url:
+          type: string
+          example: /uploads/2026/11/8f3c2b1a4d5e6f708192a3b4c5d6e7f8.jpg
+        original_filename:
+          type: string
+          example: tea.jpg
+        size:
+          type: integer
+          example: 204800
+        content_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          example: image/jpeg
+
+    UploadEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/UploadResult'
+
+    VideoUploadResult:
+      allOf:
+        - $ref: '#/components/schemas/UploadResult'
+        - type: object
+          required: [duration]
+          properties:
+            duration:
+              type: integer
+              minimum: 1
+              maximum: 180
+              description: 服务端解析的视频时长（秒）
+
+    VideoUploadEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/VideoUploadResult'
+
+    TeaMediaItem:
+      type: object
+      required: [id, image_url, sort_order]
+      properties:
+        id:
+          type: integer
+          format: int64
+        image_url:
+          type: string
+          description: 本站 /uploads/ 路径
+        sort_order:
+          type: integer
+          minimum: 0
+
+    TeaMediaCreateRequest:
+      type: object
+      required: [image_url]
+      additionalProperties: false
+      properties:
+        image_url:
+          type: string
+          maxLength: 500
+          description: 必须以 /uploads/ 开头
+        sort_order:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: 省略时取当前最大值 + 1
+
+    TeaMediaEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/TeaMediaItem'
+
+    TeaMediaListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TeaMediaItem'
+
+    DeletedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [deleted]
+              properties:
+                deleted:
+                  type: integer
+                  description: 被删除的 image_id
+
+    TeaArticle:
+      type: object
+      description: 已通过审核的用户科普投稿（S11/S12）
+      required: [id, content, contributor, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+          nullable: true
+        content:
+          type: string
+        contributor:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ContributionTeaPayload:
+      type: object
+      description: 用户提交的新茶字段（主图选填，X7 不开放图片上传）
+      required:
+        - name
+        - category
+        - origin
+        - shape_desc
+        - soup_desc
+        - aroma_desc
+        - taste_desc
+        - water_temp
+        - tea_amount
+        - brew_time
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        category:
+          type: string
+          enum: [green, white, yellow, red, oolong, dark, reprocessed]
+        origin:
+          type: string
+          maxLength: 200
+        season:
+          type: string
+          nullable: true
+        fermentation:
+          type: string
+          nullable: true
+        price_range:
+          type: string
+          maxLength: 32
+          nullable: true
+        representative_variety:
+          type: string
+          maxLength: 100
+          nullable: true
+        shape_desc:
+          type: string
+        soup_desc:
+          type: string
+        aroma_desc:
+          type: string
+        taste_desc:
+          type: string
+        water_temp:
+          type: number
+          minimum: 70
+          maximum: 100
+        tea_amount:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+        brew_time:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 999.9
+        main_image_url:
+          type: string
+          maxLength: 500
+          nullable: true
+        tips_history:
+          type: string
+          nullable: true
+        tips_suitable:
+          type: string
+          nullable: true
+        tips_misconception:
+          type: string
+          nullable: true
+        tips_official_note:
+          type: string
+          nullable: true
+
+    ContributionCreateRequest:
+      type: object
+      description: 按 type 二选一；new_tea 使用 tea，article 使用 target_tea_id + content
+      required: [type]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [new_tea, article]
+        tea:
+          $ref: '#/components/schemas/ContributionTeaPayload'
+        target_tea_id:
+          type: integer
+          format: int64
+          nullable: true
+        title:
+          type: string
+          maxLength: 50
+          nullable: true
+        content:
+          type: string
+          minLength: 3
+          maxLength: 500
+          nullable: true
+
+    ContributionRejectRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: 信息不完整
+
+    ContributionItem:
+      type: object
+      required: [id, type, status, payload, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [new_tea, article]
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        target_tea_id:
+          type: integer
+          format: int64
+          nullable: true
+        target_tea_name:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+        reject_reason:
+          type: string
+          nullable: true
+        reviewer_id:
+          type: integer
+          format: int64
+          nullable: true
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        username:
+          type: string
+          nullable: true
+          description: 仅管理端队列返回
+
+    ContributionItemEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ContributionItem'
+
+    ContributionListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ContributionItem'
+
+    ContributionPageEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, page_size]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ContributionItem'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                page_size:
+                  type: integer
+
+    # —— 批次五 R1–R5 内容板块 schemas ——
+
+    ContentType:
+      type: object
+      required: [id, code, name, sort_order]
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          enum: [teaware, origin, culture, brand, knowledge]
+        name:
+          type: string
+          maxLength: 50
+        icon:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        sort_order:
+          type: integer
+
+    ContentTypeListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ContentType'
+
+    ContentItem:
+      type: object
+      required: [id, type_id, type_code, title, sort_order, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type_id:
+          type: integer
+          format: int64
+        type_code:
+          type: string
+          enum: [teaware, origin, culture, brand, knowledge]
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          nullable: true
+          maxLength: 500
+        body:
+          type: string
+          nullable: true
+        cover_image:
+          type: string
+          nullable: true
+          maxLength: 500
+        meta:
+          type: object
+          nullable: true
+          description: 板块特有 JSON 字段（teaware/origin/culture/brand/knowledge 结构不同）
+        sort_order:
+          type: integer
+        created_at:
+          $ref: '#/components/schemas/DateTimeZ'
+        updated_at:
+          $ref: '#/components/schemas/DateTimeZ'
+
+    ContentItemEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ContentItem'
+
+    ContentListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, page_size]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ContentItem'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                page_size:
+                  type: integer
+
+    ContentCreateRequest:
+      type: object
+      required: [type_code, title]
+      additionalProperties: false
+      properties:
+        type_code:
+          type: string
+          enum: [teaware, origin, culture, brand, knowledge]
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          nullable: true
+          maxLength: 500
+        body:
+          type: string
+          nullable: true
+          maxLength: 20000
+        cover_image:
+          type: string
+          nullable: true
+          maxLength: 500
+        meta:
+          type: object
+          nullable: true
+        sort_order:
+          type: integer
+          default: 0
+
+    ContentUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          nullable: true
+          maxLength: 500
+        body:
+          type: string
+          nullable: true
+          maxLength: 20000
+        cover_image:
+          type: string
+          nullable: true
+          maxLength: 500
+        meta:
+          type: object
+          nullable: true
+        sort_order:
+          type: integer
+        is_active:
+          type: boolean
+
+    AdminContentListItem:
+      type: object
+      required: [id, type_code, title, is_active, sort_order, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type_code:
+          type: string
+          enum: [teaware, origin, culture, brand, knowledge]
+        title:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+        created_at:
+          $ref: '#/components/schemas/DateTimeZ'
+        updated_at:
+          $ref: '#/components/schemas/DateTimeZ'
+
+    AdminContentListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/ApiEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [items, total, page, page_size]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AdminContentListItem'
+                total:
+                  type: integer
+                page:
+                  type: integer
+                page_size:
+                  type: integer

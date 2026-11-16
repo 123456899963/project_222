@@ -1,0 +1,65 @@
+services:
+  mysql:
+    image: mysql:5.7
+    container_name: tea-guide-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: tea_guide
+      MYSQL_USER: tea_app
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在 .env 中设置 MYSQL_APP_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    container_name: tea-guide-api
+    restart: unless-stopped
+    environment:
+      DEBUG: "false"
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: tea_app
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在 .env 中设置 MYSQL_APP_PASSWORD}
+      MYSQL_DATABASE: tea_guide
+      SECRET_KEY: ${SECRET_KEY:?请在 .env 中设置 SECRET_KEY}
+      SESSION_EXPIRE_DAYS: ${SESSION_EXPIRE_DAYS:-30}
+      # 当前 web 默认仅 HTTP；纯 HTTP 演示需在 .env 设 COOKIE_SECURE=false
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      UPLOAD_DIR: uploads
+    volumes:
+      # 复用仓库既有图片，并持久化后台上传的新图片
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+    container_name: tea-guide-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

@@ -6,76 +6,84 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-test:
-    name: Lint, TypeCheck & Test
+  backend:
+    name: Backend Lint & Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20, 22]
-
+    defaults:
+      run:
+        working-directory: backend
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
         with:
-          version: latest
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: pnpm
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pip install -r requirements.txt
 
-      - name: Run ESLint
-        run: pnpm lint
+      - name: Ruff lint
+        run: python -m ruff check app tests
 
-      - name: Run Prettier check
-        run: pnpm format:check
+      - name: Ruff format check
+        run: python -m ruff format --check app tests
 
-      - name: Run TypeScript check
-        run: pnpm typecheck
+      - name: Pytest
+        run: python -m pytest -q
 
-      - name: Run unit tests
-        run: pnpm test:coverage
-
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v4
-        if: matrix.node-version == '22'
-        with:
-          file: ./coverage/lcov.info
-          flags: unit-tests
-
-  build:
-    name: Build
+  frontend:
+    name: Frontend Lint & Test
     runs-on: ubuntu-latest
-    needs: lint-and-test
-
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          version: latest
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
-      - name: Build Next.js app
-        run: pnpm build
-        env:
-          DATABASE_URL: postgresql://localhost:5432/test
-          NEXTAUTH_SECRET: ci-test-secret
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier check
+        run: npm run format:check
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Vitest
+        run: npm run test:run
+
+  guards:
+    name: Docs, Contract & Records Guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Static checks
+        run: python scripts/check_all.py
+
+      - name: Records sync check
+        run: >-
+          python scripts/check_records.py
+          --base-ref "${{ github.event.pull_request.base.sha || github.event.before }}"

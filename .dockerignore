@@ -1,0 +1,27 @@
+# 构建上下文排除项（保持镜像精简、避免泄露本地环境）
+.git
+.github
+.workflow
+.idea
+.vscode
+
+**/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.venv
+**/venv
+
+# 环境变量与本地素材不进入镜像（uploads 由 compose 绑定挂载）
+.env
+.env.*
+backend/uploads
+docs
+原型
+specs
+harness
+scripts
+tests

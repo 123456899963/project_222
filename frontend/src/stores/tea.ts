@@ -1,49 +1,75 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import request from '@/api/request'
-import type { Tea, TeaListItem, TeaListParams } from '@/types'
+import { getCategories, getOrigins, getTeaList } from '@/api/teas'
+import type { CategoryCount, OriginCount, TeaListItem, TeaListParams } from '@/types'
 
-/** 茶品数据 Store */
+/**
+ * 茶品数据 Store（只读）
+ * —— 列表请求参数一律由后端处理（筛选/搜索/排序/分页），前端不做本地过滤
+ * —— 茶类计数与产地选项为全站共享数据，首次加载后缓存
+ */
 export const useTeaStore = defineStore('tea', () => {
   const list = ref<TeaListItem[]>([])
   const total = ref(0)
-  const current = ref<Tea | null>(null)
-  const hotList = ref<TeaListItem[]>([])
-  const random = ref<Tea | null>(null)
+  const page = ref(1)
+  const pageSize = ref(12)
   const loading = ref(false)
+  const error = ref('')
+
+  const categories = ref<CategoryCount[]>([])
+  const origins = ref<OriginCount[]>([])
+  let categoriesLoaded = false
+  let originsLoaded = false
+
+  /** 拉取列表；并发请求只采纳最后一次，避免快速切换筛选时的竞态 */
+  let requestSeq = 0
 
   async function fetchList(params: TeaListParams) {
+    const seq = ++requestSeq
     loading.value = true
+    error.value = ''
     try {
-      const res = await request.get('/teas', { params })
-      if (res.data) {
-        list.value = res.data.items
-        total.value = res.data.total
-      }
+      const res = await getTeaList(params)
+      if (seq !== requestSeq) return
+      list.value = res.data?.items ?? []
+      total.value = res.data?.total ?? 0
+      page.value = res.data?.page ?? 1
+      pageSize.value = res.data?.page_size ?? 12
+    } catch (err) {
+      if (seq !== requestSeq) return
+      list.value = []
+      total.value = 0
+      error.value = err instanceof Error ? err.message : '加载失败'
     } finally {
-      loading.value = false
+      if (seq === requestSeq) loading.value = false
     }
   }
 
-  async function fetchDetail(id: number) {
-    loading.value = true
-    try {
-      const res = await request.get(`/teas/${id}`)
-      current.value = res.data
-    } finally {
-      loading.value = false
-    }
+  async function fetchCategories(force = false) {
+    if (categoriesLoaded && !force) return
+    const res = await getCategories()
+    categories.value = res.data ?? []
+    categoriesLoaded = true
   }
 
-  async function fetchHot() {
-    const res = await request.get('/teas/hot')
-    hotList.value = res.data || []
+  async function fetchOrigins(force = false) {
+    if (originsLoaded && !force) return
+    const res = await getOrigins()
+    origins.value = res.data ?? []
+    originsLoaded = true
   }
 
-  async function fetchRandom(excludeId?: number) {
-    const res = await request.get('/teas/random', { params: { exclude_id: excludeId } })
-    random.value = res.data
+  return {
+    list,
+    total,
+    page,
+    pageSize,
+    loading,
+    error,
+    categories,
+    origins,
+    fetchList,
+    fetchCategories,
+    fetchOrigins,
   }
-
-  return { list, total, current, hotList, random, loading, fetchList, fetchDetail, fetchHot, fetchRandom }
 })

@@ -1,0 +1,59 @@
+# 说明：Gitee Go 流水线配置（云端编译插件）。
+# 触发后依次执行「后端静态检查」与「前端检查」两个阶段。
+# 注意：Gitee Go 云端构建环境不提供 MySQL 服务，故 pytest（依赖真实 MySQL）
+# 不在本流水线执行，仍以本地 / GitHub Actions service container 为准；
+# 本文件已提交，但尚未在 Gitee 远端实际触发验证。
+
+version: '1.0'
+
+name: ci
+
+displayName: 茶·图鉴 CI
+
+triggers:
+  push:
+    branches:
+      include:
+        - master
+        - main
+        - develop
+  pr:
+    branches:
+      include:
+        - master
+        - main
+
+stages:
+  - stage:
+      name: backend-static
+      displayName: 后端静态检查
+      strategy: naturally
+      trigger: auto
+      steps:
+        - step: build@python
+          name: backend_static
+          displayName: Ruff + 文档/常量静态检查
+          pythonVersion: '3.9'
+          commands:
+            - pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+            - pip3 install ruff
+            - python3 -m ruff check backend/app backend/tests
+            - python3 -m ruff format --check backend/app backend/tests
+            - python3 scripts/check_all.py
+
+  - stage:
+      name: frontend-check
+      displayName: 前端检查
+      strategy: naturally
+      trigger: auto
+      steps:
+        - step: build@nodejs
+          name: frontend_check
+          displayName: lint / format / typecheck / test / build
+          nodeVersion: '15.12.0'
+          commands:
+            # 内置 Node 版本过旧，安装 Node 20（Vite 8 要求 20.19+）
+            - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+            - yum install -y nodejs
+            - node -v
+            - cd frontend && npm ci && npm run lint && npm run format:check && npm run typecheck && npm run test:run && npm run build

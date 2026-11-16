@@ -1,32 +1,46 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+
+export type ToastType = 'success' | 'warning' | 'error' | 'info'
+
+export interface ToastItem {
+  id: number
+  type: ToastType
+  message: string
+}
+
+const DURATION_MS = 3000
 
 /**
  * Toast 通知 Store
- * —— 全局可用的轻量提示（用 Element Plus ElMessage 实现）
+ * —— 前台自研轻量提示（不依赖 Element Plus），由 AppToast 统一渲染
  */
 export const useToastStore = defineStore('toast', () => {
-  function success(msg: string) {
-    ElMessage({ message: msg, type: 'success', showClose: true })
-  }
-  function warn(msg: string) {
-    ElMessage({ message: msg, type: 'warning', showClose: true })
-  }
-  function error(msg: string) {
-    ElMessage({ message: msg, type: 'error', showClose: true })
-  }
-  function info(msg: string) {
-    ElMessage({ message: msg, type: 'info', showClose: true })
+  const items = ref<ToastItem[]>([])
+  let seq = 0
+
+  function remove(id: number) {
+    items.value = items.value.filter((item) => item.id !== id)
   }
 
-  function confirm(title: string, msg: string) {
-    return ElMessageBox.confirm(msg, title, {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+  function push(type: ToastType, message: string) {
+    const id = ++seq
+    items.value.push({ id, type, message })
+    window.setTimeout(() => remove(id), DURATION_MS)
   }
 
-  return { success, warn, error, info, confirm }
+  function success(message: string) {
+    push('success', message)
+  }
+  function warn(message: string) {
+    push('warning', message)
+  }
+  function error(message: string) {
+    push('error', message)
+  }
+  function info(message: string) {
+    push('info', message)
+  }
+
+  return { items, remove, success, warn, error, info }
 })
