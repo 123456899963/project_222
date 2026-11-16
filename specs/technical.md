@@ -1,5 +1,7 @@
 # 中华茶产业全链路数字科普与实践辅助平台 - 技术规格说明书 (SDD)
 
+> ⚠️ **历史草稿，非权威**：与 [docs/](../docs/) 冲突时一律以 `docs/` 为准；当前工程统一使用 npm。
+>
 > 版本: v0.1.0  
 > 日期: 2026-11-03  
 > 状态: 初稿
@@ -35,7 +37,7 @@
 
 | 类别 | 工具 | 说明 |
 |-----|------|-----|
-| 包管理 | pnpm | 快速、节省磁盘 |
+| 包管理 | npm（当前口径；历史草稿原为 pnpm） | 唯一 lockfile：`package-lock.json` |
 | 构建 | Turbopack | 快速增量编译 |
 | Lint | ESLint + Prettier | 代码规范 |
 | 单元测试 | Vitest | Vite原生，极速测试 |
@@ -112,7 +114,7 @@ tea-industry-platform/
 ├── playwright.config.ts
 ├── drizzle.config.ts
 ├── package.json
-├── pnpm-workspace.yaml         # 如需要monorepo
+├── package-lock.json           # npm 唯一 lockfile
 └── README.md
 ```
 

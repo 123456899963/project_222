@@ -1,11 +1,11 @@
 # 茶·图鉴 —— 页面功能规格文档（PAGE_SPECS）
 
-> **版本**：v2.0（MVP 全量完成，含管理员后台）
-> **日期**：2026-11-05
+> **版本**：v2.1（新增详情页分步冲泡教程与后台教程编辑区块，ADR-0005）
+> **日期**：2026-11-12
 > **适用范围**：学生端（游客 + 注册用户）全部 MVP 页面 + 管理员后台 A1-A5
 > **与 PRD 对应**：v1.1 定稿 M1-M7 模块
 > **与设计规范对应**：docs/design/DESIGN_SYSTEM.md（方案一：清新水墨）
-> **v2.0 变更**：完成全部第二批功能（详情页/收藏清单/分享清单/管理员后台）+ 修复 5 个问题（S1-S3 严重 + M1-M3 中等）
+> **v2.1 变更**：详情页「冲泡参考」升级为「冲泡教程」（速查三格 + 步骤默认收起、点击展开 + 注意事项）；A4/A5 茶品表单新增「冲泡教程」编辑区块（3–8 步、模板填充、删除教程）
 
 ---
 
@@ -104,12 +104,16 @@ common.js 的 `getPagePrefix()` 自动检测当前页面层级：
 
 | 区块 | 内容 | 数据来源 | 交互 |
 |---|---|---|---|
-| **导航栏** | Logo（茶叶 SVG + "茶·图鉴"）、首页/六大茶类链接、搜索入口、登录/用户信息 | common.js renderNav() | 首页透明态 → 滚动 320px 后纯白态；点 Logo 或首页回首页；点六大茶类跳列表页；点登录弹模态框 |
-| **Hero** | Badge + 主标题 + 副标题 + 搜索框 | 静态文案 + 占位输入框 | 搜索框回车跳列表页带 `q=`；输入 150ms debounce 显示下拉建议（最多 6 条，匹配 name 或 origin） |
-| **六大茶类入口** | 6 张 category-card（emoji + 名称 + 已收录数量 + hover 彩条） | TEA_MOCK.getCategoriesWithCount() | 点跳列表页 `?category={key}` |
+| **导航栏** | Logo（茶叶 SVG + "茶·图鉴"）、首页/七大茶类链接、搜索入口、登录/用户信息 | common.js renderNav() | 首页**首屏透明态**（页头浮在 Hero 背景上、文字与控件转白）→ 滚过 Hero 后转纯白态；点 Logo 或首页回首页；点七大茶类跳列表页；点登录弹模态框 |
+| **Hero** | 沉浸式首屏：满屏背景图 + 暗色压边（顶部 0.62 / 中段 0.18 / 底部 0.86 竖向渐变，非整片遮罩）+ 居中 kicker（两侧发丝线）+ 双行主标题（「一杯茶的」白 /「千种风味」暖金）+ 副标题 + 搜索框（**仅 <768px 显示**；≥768px 统一使用页头搜索框，同屏不出现两个搜索入口）+ 底部「向下探索」细线提示 | 静态文案 + 占位输入框 | 滚动时背景以 0.28 速率下移、内容上浮并淡出，形成纵深层级；`prefers-reduced-motion` 下全部静止；搜索框回车跳列表页带 `q=`；输入 150ms debounce 显示下拉建议（最多 6 条，匹配 name 或 origin） |
+| **统计带** | 三格数据：已收录茶品数（CountUp 滚动）/ 七大茶类 / 覆盖产地数 | categories 汇总 + origins 接口 | 纯展示，无交互；移动端隐藏分隔线 |
+| **引导入口** | 3 张 guide-card：序号 + 意图标题 + 一行说明 + hover 箭头。新手入门 / `{当季}正当时` / 七大茶类对比 | 当季由当前月份推导；前两条复用列表页筛选参数，三条跳对比页 | 新手入门 → `?fermentation=不发酵,微发酵`；当季 → `?season={当季}`；对比 → `/compare` |
+| **七大茶类入口** | 7 张 category-card（茶类色圆形色块 + 中文名 + 英文小标 + 已收录数量） | categories 接口汇总 | 点跳列表页 `?category={key}` |
 | **热门推荐** | 横向卡片轨道（8 张 card-hot：图片 + 名称 + 产地 + tag + ❤️ 收藏按钮 + 收藏数） | TEA_MOCK.getHotTeas(8) | 左右箭头按钮；鼠标拖拽；点卡片跳详情页；点 ❤️ toggle 收藏（未登录弹模态框） |
 | **随机发现** | card-random（大图 + 名称 + tag + 收藏数 + 🌡℃/🫖g/⏱s + ❤️）+ 换一批按钮 | TEA_MOCK.getRandomTea(currentId) 排除上一条 | 换一批有 400ms 旋转动画；点卡片跳详情页；点 ❤️ toggle 收藏 |
 | **页脚** | 品牌名 + 描述 + 版权 | 静态 | — |
+
+> **区块标题规范**：首页各区块统一为「宽字距英文小标（kicker）+ 中文标题」两层结构。居中区块（七大茶类）的 kicker 两侧带 32px 发丝线；左对齐区块（热门推荐、茶知识）的 kicker 左对齐、不带线，标题右侧保留「查看全部 / 探索更多」动作链接。中文标题不再使用 emoji 前缀。
 
 ### 3.2 状态表
 
@@ -131,13 +135,13 @@ common.js 的 `getPagePrefix()` 自动检测当前页面层级：
 
 | 区块 | 内容 | 数据来源 | 交互 |
 |---|---|---|---|
-| **导航栏** | 纯白态（nav--solid） | common.js | 点 Logo/首页回首页；点六大茶类跳列表页（自己） |
+| **导航栏** | 纯白态（nav--solid） | common.js | 点 Logo/首页回首页；点七大茶类跳列表页（自己） |
 | **面包屑** | 首页 › {全部 / 茶类名 / 搜索："xxx"} | JS state 动态 | 点"首页"回首页 |
-| **筛选面板** | 三大分组（六大茶类 / 产地 / 采摘季节），每组 6~15 个 chip | CATEGORIES / getOriginsWithCount() / SEASONS | 点 chip toggle 选中；六大茶类 chip 各有专属色；AND 三维度组合 |
+| **筛选工具条** | 单行：七大茶类 chips（常显）+「筛选」按钮（带高级条件数量角标）+ 排序下拉 | CATEGORIES / getOriginsWithCount() / SEASONS | 点 chip toggle 选中；七大茶类 chip 各有专属色；AND 维度组合；产地 / 季节 / 发酵 / 价格折叠在面板内，默认收起，命中高级条件时自动展开 |
 | **已选条件区** | pill 列表（每个可 × 移除）+ 清除全部按钮 | state 动态 | 点 × 单独移除并刷新；点清除重置全部 |
-| **排序栏** | 结果数 + 排序下拉（最新上架 / 收藏最多） | 实时计算 | 切换排序即时刷新 |
+| **结果数** | 结果数文本（排序下拉已移入筛选工具条） | 实时计算 | 随筛选/分页即时更新 |
 | **骨架屏** | 6 个 skeleton-card（图片 + 标题 + 次文字占位 + shimmer） | CSS | 首次加载 400ms 后替换为真实数据 |
-| **卡片网格** | 3列桌面/2列平板/1列移动 card-tea：图片 16:10 + 名称 + 六大茶类 tag + 产地 + ⚠️收藏 icon + 采摘季节 | getFilteredAndSortedTeas() | 点收藏 icon toggle（整卡重渲染 + Toast）；点卡片 body 跳详情页 |
+| **卡片网格** | 3列桌面/2列平板/1列移动 card-tea：图片 16:10 独立圆角 + 茶名 + 一行元信息（茶类色圆点 · 产地 · ♡收藏数），信息区无白底无边框 | getFilteredAndSortedTeas() | 图片 hover scale(1.04)；点收藏 icon toggle（整卡重渲染 + Toast）；点卡片 body 跳详情页 |
 | **分页** | 上一页/下一页 + 页码 + 省略号 | 9 条/页 | 翻页即时刷新 + URL page 参数同步 |
 | **空状态** | 🫖 图标 + 标题 + 描述 + 清除按钮 + 3 款热门推荐卡 | getHotTeas(3) | 点清除重置；点热门推荐卡**直接跳该茶详情页** |
 
@@ -160,7 +164,7 @@ common.js 的 `getPagePrefix()` 自动检测当前页面层级：
 | 点 icon（实心 → 空心） | toggleFavorite(id) → localStorage splice | ❤️ 空心 + Toast "已取消收藏「xxx」" + 整卡重渲染 |
 | 点卡片 body | 跳详情页 | `detail.html?id={teaId}` |
 
-### 4.4 六大茶类标签色
+### 4.4 七大茶类标签色
 
 | 茶类 | chip 未选中 | chip 选中 | card-tea tag |
 |---|---|---|---|
@@ -170,6 +174,7 @@ common.js 的 `getPagePrefix()` 自动检测当前页面层级：
 | 红茶 red | outline #C0392B + #C0392B | solid #C0392B + 白字 | #C0392B + 白字 |
 | 乌龙茶 oolong | outline #D35400 + #D35400 | solid #D35400 + 白字 | #D35400 + 白字 |
 | 黑茶 dark | outline #4A3728 + #4A3728 | solid #4A3728 + 白字 | #4A3728 + 白字 |
+| 再加工茶 reprocessed | outline #B98A9B + #B98A9B | solid #B98A9B + 白字 | #B98A9B + 白字 |
 
 ### 4.5 状态
 
@@ -194,7 +199,8 @@ common.js 的 `getPagePrefix()` 自动检测当前页面层级：
 | **骨架屏** | 大图占位 + 标题占位 + 文本占位 + shimmer | CSS | 首次加载 350ms 后替换 |
 | **头部** | 主图（大图）+ 图片上叠加的茶类标签（**可点击**）+ 名称 + 产地 + 季节 | TEAS[id] | 点茶类标签跳列表页带 `?category={tea.category}`；主图 onerror 显示灰底 |
 | **行动按钮栏** | ❤️ 收藏 / ✏️ 写笔记 / ↗️ 分享 | localStorage + 模态框 | 收藏 toggle + Toast；笔记弹模态框（localStorage tea_notes）；分享弹模态框（生成 shareId + localStorage 写入 + 正确路径 `/c/{shareId}/index.html`） |
-| **冲泡参考卡** | 🌡 水温 / 🫖 投茶量 / ⏱ 浸泡时间 | tea.waterTemp / tea.teaAmount / tea.brewTime | — |
+| **购买入口** | 茶名右侧（与标题同一行、右对齐）的主按钮「🛒 去淘宝搜索同款」+ 下方小字「跳转第三方平台，本站不参与交易」 | `tea.name` 前端拼接 | 新标签页打开 `https://s.taobao.com/search?q={encodeURIComponent(茶名)}`；仅 `ready` 状态且茶名非空时渲染；`target="_blank" rel="noopener noreferrer"`；不接入商品、下单、支付 |
+| **冲泡教程卡** | 标题「冲泡教程」；顶部三格速查（🌡 水温 / 🫖 投茶量 / ⏱ 浸泡时间）；教程总览一句话；默认不展开步骤，底部按钮「展开冲泡教程（共 N 步）」+ 右侧下箭头，展开全部步骤与「⚠️ 注意事项」；无自定义教程时标题退回「冲泡参考」且只显示三格 | `tea.brewing_guide` + `tea.water_temp/tea_amount/brew_time` | 步骤含序号、标题、动作说明、可选小提示；展开状态仅前端，切换茶品时重置；展开/收起为 320ms 高度折叠与箭头翻转，收起时同步逐帧平滑滚回展开前的滚动位置（`easeInOutCubic`，系统「减少动态效果」时直接跳回）；`brewing_guide=null` 时整块不渲染教程区，三格全空则整卡隐藏 |
 | **四大感官卡** | 外形 / 汤色 / 香气 / 滋味 | tea.shape / tea.soup / tea.aroma / tea.taste | 每块左侧 emoji + 文字描述 |
 | **小贴士卡** | 4 块可独立显隐：历史文化 / 适合人群 / 常见误区 / 官方备注 | tea.tips.history / suitable / misconception / officialNote | **空内容整块隐藏**（display:none） |
 | **同类推荐区** | 最多 4 张 card-hot（同 category，排除自身） | getRelatedTeas(tea, 4) | 点卡跳其他详情页 |
@@ -238,6 +244,19 @@ localStorage.setItem('tea_notes', JSON.stringify({
 ### 5.5 登录守卫（S3 修复）
 
 common.js 的 openLoginModal 在登录成功和注册成功后都会 `document.dispatchEvent(new CustomEvent('tea:login'))`。所有需要登录的页面（P3 分享/收藏按钮、P4 收藏清单）都监听此事件来刷新 UI 状态。
+
+### 5.6 收藏清单选择面板（S9 多清单交互，Vue 实现新增）
+
+**组件**：`frontend/src/components/FavoriteButton.vue`（仅 primary variant，用于茶品详情页）
+
+详情页主收藏按钮右侧附加「选择清单」箭头按钮，与主按钮拼为胶囊组合：
+
+- 主按钮行为不变：未收藏 → 加入默认清单；已收藏 → 从全部清单移除
+- 箭头按钮（仅登录态渲染）：展开清单选择面板，逐清单勾选/取消收录；勾选态由收藏状态响应 `list_ids` 驱动（`aria-checked` 同步）
+- 面板行为：懒加载 `GET /lists`；点击清单行幂等切换（已含则移出、未含则加入）；计数按「用户 × 茶品」去重口径联动（加入首个清单 +1、移出最后一个清单 -1）
+- 关闭方式：Esc（焦点回箭头）、点击面板外区域、路由跳转
+- 无障碍：`aria-haspopup` + `aria-expanded` + `role="menu"` / `role="menuitemcheckbox"`；触屏可用（不依赖 hover）
+- 视觉：全部引用 `:root` 设计变量，无硬编码 HEX
 
 ---
 
@@ -344,7 +363,7 @@ share.js 从 `window.location.pathname.split('/')[3]` 提取 shareId。
 | 项 | 内容 |
 |---|---|
 | 路由 | `原型/admin/index.html` |
-| 区块 | 3 张统计卡（茶品总数 / 已上架 / 已下架）+ 六大茶类分布柱状图 + 最近 5 款（最新添加/编辑） |
+| 区块 | 3 张统计卡（茶品总数 / 已上架 / 已下架）+ 七大茶类分布柱状图 + 最近 5 款（最新添加/编辑） |
 | 数据源 | admin.js 的 getAdminTeas()（合并 mock TEAS + localStorage admin_teas_edited 里的 CRUD 操作） |
 
 ### 9.3 A3 茶品管理列表
@@ -361,7 +380,7 @@ share.js 从 `window.location.pathname.split('/')[3]` 提取 shareId。
 | 项 | 内容 |
 |---|---|
 | 路由 | `原型/admin/teas/new.html` |
-| 表单分块 | ① 基础信息（名称 + 茶类 + 产地 + 季节）② 冲泡参考（水温/投茶量/时间）③ 四大感官（外形/汤色/香气/滋味）④ 小贴士 4 块 + 主图 URL |
+| 表单分块 | ① 基础信息（名称 + 茶类 + 产地 + 季节）② 冲泡参考（水温/投茶量/时间）③ 四大感官（外形/汤色/香气/滋味）④ 小贴士 4 块 + 主图 URL ⑤ 冲泡教程（总览 + 3–8 步 + 注意事项，支持「按茶类生成草稿」、增删/上下移、删除教程） |
 | 必填校验 | 名称 ≥1 字 / 茶类必选 / 产地必选（其他字段可留空） |
 | 保存后 | 写入 localStorage admin_teas_edited（new 数组 push）→ Toast → 跳 A3 |
 
@@ -411,4 +430,27 @@ share.js 从 `window.location.pathname.split('/')[3]` 提取 shareId。
 | 4 | 分享链接用 localStorage，**跨浏览器/跨设备/换电脑/清缓存后失效** | 纯前端原型天生限制 | 接后端（服务端存储清单）后解决 |
 | 5 | 没有骨架屏以外的异步错误状态（如 API 超时） | 纯前端无真实请求 | 接后端后加 error boundary |
 | 6 | 管理员 CRUD 也是 localStorage，**清缓存后重置** | 纯前端原型天生限制 | 接后端后持久化 |
+| 7 | 管理员角色单一（只有 admin），无权限分级 | MVP 简化 | 第二阶段扩展 |
+
+---
+
+## 十三、前台一级页面统一标题区（2026-11-12）
+
+> 首页沉浸式首屏落地后，其余前台一级页面统一同一套标题区与顶部留白，规则见 DESIGN_SYSTEM §4.10。
+
+| 页面 | 顶部留白（桌面 / ≤767px） | 标题区 |
+|---|---|---|
+| P2 茶品列表 | 88 / 76 | 保持原型结构（面包屑 + 筛选工具条），不新增 h1 |
+| P3 茶品详情 | 88 / 76 | 面包屑 + kicker「TEA DETAIL」+ 衬线茶名 |
+| 七大茶类对比 | 88 / 76 | 面包屑 + 居中 kicker「SIDE BY SIDE」（带发丝线）+ 衬线标题 |
+| 茶文化板块列表 | 88 / 76 | 面包屑 + kicker「TEA CULTURE」+ 板块标题 |
+| 茶文化内容详情 | 88 / 76 | 面包屑 + kicker「ARTICLE」+ 衬线标题 |
+| P4 收藏清单 | 88 / 76 | 保留页内眉标「我的清单」，不叠加 kicker |
+| 个人中心 | 88 / 76 | 面包屑 + kicker「PROFILE」+ 衬线用户名 |
+| P5 分享清单 | 88 / 76 | 保留徽章行，不叠加 kicker |
+| 投稿 | 88 / 76 | 面包屑 + kicker「CONTRIBUTE」+ 衬线标题（修复被固定页头遮挡） |
+| 我的提交 | 88 / 76 | 面包屑 + kicker「MY CONTRIBUTIONS」+ 衬线标题（同上） |
+
+- 面包屑分隔符统一为「›」。
+- 投稿 / 我的提交两页补齐 `.container`（1200 / 32px，≤1023px 24px，≤767px 16px）。
 | 7 | 管理员角色单一（只有 admin），无权限分级 | MVP 简化 | 第二阶段扩展 |

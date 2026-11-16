@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="预置头像：月下">
+  <circle cx="100" cy="100" r="100" fill="#F2F0EC"/>
+  <circle cx="104" cy="92" r="30" fill="#A9744F" opacity=".22"/>
+  <path d="M104 62a30 30 0 1 0 0 60 34 34 0 0 1 0-60z" fill="#A9744F" opacity=".55"/>
+  <path d="M56 138c14-10 28-10 42 0s28 10 42 0" stroke="#A9744F" stroke-width="4" fill="none" stroke-linecap="round" opacity=".6"/>
+</svg>

@@ -1,8 +1,9 @@
 """Alembic 环境配置：从 app.core.database 导入 Base.metadata，让 autogenerate 能发现所有模型"""
+
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.core.database import Base

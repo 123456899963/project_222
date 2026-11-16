@@ -40,14 +40,14 @@
 
 | 决策 | 落点 | 对应 TECH_STACK 编号 |
 |---|---|---|
-| 认证：HttpOnly Cookie + 服务端 session，30 天 | 后端 `app/core/security.py`（bcrypt 哈希 + itsdangerous 签名 Cookie）+ `app/routers/auth.py`（register/login/logout 设/清 Cookie） | 6 |
+| 认证：HttpOnly Cookie + 服务端 session，30 天 | 后端 `app/core/security.py`（bcrypt 哈希 + itsdangerous 签名 Cookie）+ `app/routers/auth.py`（register/login/logout 设/清 Cookie）。**最终不建 `sessions` 表**（签名的无状态 Cookie 已满足 FR-4.3），见 DATA_MODEL §1 | 6 |
 | 跨域：开发期 Vite proxy `/api` → 8000，全程同源 | `frontend/vite.config.ts` 已配置 | 2 |
 | 统一响应体：`{ code, message, data }` | 后端 `app/core/response.py` + Axios 响应拦截器 `frontend/src/api/request.ts` | 3 |
 | 图片：本地磁盘 + FastAPI StaticFiles 挂载 uploads/ | `backend/app/main.py` 的 `app.mount("/uploads", ...)` | D 取舍 |
 | 类型链路：Pydantic ↔ TS interface | 后端 `app/schemas/` 与前端 `src/types/` 一一对应；后续通过 openapi-typescript 自动生成 | 6 |
 | Element Plus 仅管理员后台 | 前端 `main.ts` 全局注册；前台自研组件迁移原型 CSS | 2 |
 | CSS：`:root` 自定义属性 + BEM | `frontend/src/style.css` 已落地 | 4 |
-| MySQL 5.7.19.0 / utf8mb4_unicode_ci | 建库 SQL（后续执行） | 9 |
+| MySQL 5.7.19.0 / utf8mb4_unicode_ci | 已在 `database/init.sql` 中建库；表设计见 `DATA_MODEL.md` | 9 |
 | 后端五层架构 | 本架构文档 §3 定义 | 6 |
 
 ---
@@ -89,10 +89,11 @@ graph TB
 
     subgraph 数据层["数据层 — MySQL 5.7.19.0"]
         UserDB[users 表]
-        TeaDB[teas + tea_tips 表]
+        TeaDB[teas + tea_tips + tea_brewing_guides 表]
         FavDB[favorite_items 表]
+        ListDB[collection_lists 表]
         ShareDB[share_tokens 表]
-        LogDB[operation_logs + tasting_notes 表]
+        LogDB[operation_logs 表]
         Uploads[本地磁盘 uploads/<br/>图片存储]
     end
 
@@ -288,7 +289,7 @@ Nginx (80/443)
 | 项 | 现状 / 策略 |
 |---|---|
 | 随机发现 | `ORDER BY RAND()`，数据量 < 1000 行无问题（TECH_STACK 4.9） |
-| 筛选聚合 | 六大茶类数量统计：一次 `GROUP BY category` 即可 |
+| 筛选聚合 | 七大茶类数量统计：一次 `GROUP BY category` 即可 |
 | 分页 | OFFSET + LIMIT，每页 12 条 |
 | 前端路由懒加载 | 动态 `import()` 按需加载 `/admin` 全部后台组件 |
 | Axios 请求去重 | 同页面重复调同一接口：Pinia Store 内做 loading 防抖 |
@@ -327,7 +328,7 @@ Nginx (80/443)
 | pytest + Vitest 测试 | 决策 7 | 课程/毕设要求测试交付物 |
 | `frontend/` + `backend/` 双目录 | 决策 8 | 清晰的前后端分离仓库结构 |
 | MySQL 5.7.19.0 / utf8mb4_unicode_ci | 决策 9 | 用户锁定版本，排序规则兼容 5.7/8.0 |
-| 后端五层架构 | 核心设计 | 责任分离、易于单测、禁止跨层违规 |
+| 后端五层架构 | ——（本文 §1 核心设计） | 责任分离、易于单测、禁止跨层违规 |
 
 ---
 
@@ -348,5 +349,5 @@ Nginx (80/443)
 | # | 位置 | 冲突 | 处理 |
 |---|---|---|---|
 | 1 | TECH_STACK §5 仓库结构 vs 脚手架目录 | TECH_STACK 列出四层（routers/services/models/schemas），用户明确要求五层（加 repositories） | **后续开发第一步在 `backend/app/` 下创建 `repositories/` 目录** |
-| 2 | TECH_STACK §2.1 八张表 vs 脚手架五张 ORM 模型 | `tasting_note`、`session`（或用签名 Cookie 替代）、`operation_log` 三张表未建 | `tasting_note` 合并到 `favorite_items.tasting_note` 字段（PRD 4.2 每条收藏有品鉴笔记）；`session` 用 itsdangerous 签名 Cookie 替代；`operation_log` MVP 不记录 |
+| 2 | TECH_STACK §2.1 八张表 vs 实际模型 | `tasting_note`、`session` 未建；PRD §4.2 的清单缺少承载表；`share_tokens` 直接挂 `user_id` 且自有 `title` | 已按 [DATA_MODEL.md](DATA_MODEL.md) v1.0 定稿：`tasting_note` 合并到 `favorite_items.tasting_note`；`session` 用签名 Cookie 替代（不建表）；新增 `collection_lists`（PRD §4.2，`UNIQUE(user_id)` 固化单清单）；补齐最小 `operation_logs`；`share_tokens` 改挂 `list_id`、移除 `title`、`token` 改大小写敏感。**最终 7 张表**，建表脚本见 `database/init.sql` |
 | 3 | 数据库版本 | 用户后续确认为 MySQL 5.7.19.0 | 已更新 TECH_STACK，排序规则用 `utf8mb4_unicode_ci` |

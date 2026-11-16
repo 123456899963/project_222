@@ -6,22 +6,37 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write \"src/**/*.{ts,vue,js,json,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,vue,js,json,css}\"",
+    "typecheck": "vue-tsc -b",
+    "test": "vitest",
+    "test:run": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.21.0",
     "element-plus": "^2.14.7",
     "pinia": "^4.1.0",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.44",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@types/qrcode": "^1.5.5",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/tsconfig": "^0.9.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.12.0",
+    "prettier": "^3.9.10",
     "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
     "vite": "^8.3.6",
+    "vitest": "^5.1.0",
     "vue-tsc": "^3.3.14"
   }
 }

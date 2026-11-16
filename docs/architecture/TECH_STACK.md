@@ -39,8 +39,8 @@
 | 前台页面 | 6 个路由（首页/列表/详情/清单/分享公开页/404）+ 登录注册模态框 | PAGE_SPECS §1.1 |
 | 管理后台 | 5 个页面（登录/仪表盘/茶品列表/新增/编辑） | PAGE_SPECS §1.2 |
 | 组件数量 | 约 25-35 个（原型已实现导航/卡片/筛选/骨架屏/Toast/模态框） | 原型 `js/common.js` + `js/admin.js` 可拆分数量 |
-| REST 端点 | 约 18-22 个 | 茶品 CRUD + 筛选聚合 + 认证 + 收藏 + 清单 + 分享令牌 + 小贴士 + 上下架 |
-| 数据表 | 约 8 张 | `tea` / `tea_tips` / `user` / `favorite_item` / `tasting_note` / `share_token` / `session`（可选） / `operation_log`（可选） |
+| REST 端点 | 29 个（定稿见 [API_CONTRACT.md](../api/API_CONTRACT.md) §3） | 茶品 CRUD + 筛选聚合 + 认证 + 收藏 + 清单 + 分享令牌 + 小贴士 + 上下架 |
+| 数据表 | 7 张（定稿见 [DATA_MODEL.md](DATA_MODEL.md) §2：`tasting_note` 已合并入 `favorite_items`、不建 `session`、新增 `collection_lists`） | `users` / `teas` / `tea_tips` / `collection_lists` / `favorite_items` / `share_tokens` / `operation_logs` |
 | 查询复杂度 | **低** | AND 筛选、双维排序、分页、`ORDER BY RAND()` 随机发现、LIKE 关键词搜索（X9 明确不做相关度算法） |
 | 并发/数据量 | **小** | 初始 30-50 款茶；MVP 用户量小，无高并发、无海量数据、无实时通信 |
 
@@ -95,7 +95,7 @@
 
 | 工具 | 学生常见困惑 | 建议 |
 |---|---|---|
-| npm / pnpm | 依赖版本、`node_modules`、`package-lock.json` | 团队统一用 pnpm（更快、严格），但先让全员装好 Node.js ≥ 20 |
+| npm | 依赖版本、`node_modules`、`package-lock.json` | 统一使用 npm（仓库已有 `package-lock.json`，不引入第二套 lockfile）；Node.js ≥ 20 |
 | Python 虚拟环境 | venv vs conda vs poetry 混淆 | **强制统一用 venv + pip**，文档写入"第一节课先配好 `python -m venv .venv` 和 `pip install -r requirements.txt`" |
 | Git | rebase vs merge 混淆、commit message 不规范 | 用最简单的方式：`git checkout -b feature/xxx` → `git add .` → `git commit -m "feat: xxx"` → `git push` → 合并时用 GitHub/Gitee PR |
 
@@ -116,7 +116,7 @@
 | 统一响应体 | `{ code: number, message: string, data: any }` + 错误码表（附录，PRD 未定义需补） |
 | 数据库变更 | 一律走 Alembic 迁移，禁止手工改表 |
 | 代码规范 | 前端 ESLint + Prettier；后端 Ruff；提交前统一格式化 |
-| 设计 token | 六大茶类颜色等设计 token 已在 DESIGN_SYSTEM.md 定义为 CSS 变量，前后台共用一份 `:root` 变量文件，避免硬编码色值 |
+| 设计 token | 七大茶类颜色等设计 token 已在 DESIGN_SYSTEM.md 定义为 CSS 变量，前后台共用一份 `:root` 变量文件，避免硬编码色值 |
 
 ### 3.6 部署难度
 
@@ -168,7 +168,7 @@ Docker Compose（`web` + `api` + `mysql` 三容器）让部署可复制、答辩
 ### 4.2 【A 决策 · 必须拍板】Element Plus 与现有设计规范冲突
 
 **现象**：这是既定栈唯一真正的适配问题。
-- DESIGN_SYSTEM.md 定义了强定制视觉：茶褐色主色 `#8B7355`、六大茶类专属色、"清新水墨"新中式极简风格、胶囊按钮、自绘卡片——原型已用约 32KB 手写 CSS 完整实现；
+- DESIGN_SYSTEM.md 定义了强定制视觉：茶褐色主色 `#8B7355`、七大茶类专属色、"清新水墨"新中式极简风格、胶囊按钮、自绘卡片——原型已用约 32KB 手写 CSS 完整实现；
 - Element Plus 自带蓝色系（`#409EFF`）视觉语言与独立组件样式，前台页面若直接套用，将与设计规范明显冲突；深度定制需覆盖大量 `--el-*` CSS 变量，且部分组件（表格、日期选择等）细节还原度低。
 
 **三个方案（任选其一，均不更换既定栈主体）**：
@@ -229,7 +229,7 @@ FastAPI 本体是轻量框架，不自带 ORM、迁移、数据库驱动、密�
 | 数据库迁移 | Alembic | SQLAlchemy 官方配套；命令固定 | 手写 SQL 脚本（**不推荐**，易漂移） |
 | MySQL 驱动 | PyMySQL（纯 Python） | Windows 安装零障碍，`pip install pymysql` 即可 | mysqlclient（需编译环境，Windows 易踩坑） |
 | 密码哈希 | `bcrypt` 库直接使用 | PRD 4.3 指定 bcrypt；避开 passlib 与 bcrypt 4.x 的已知兼容问题 | passlib（需锁旧版本） |
-| 会话管理 | HttpOnly Cookie + 服务端 session 表（或 itsdangerous 签名 Cookie） | 契合 FR-4.3 的 30 天 Cookie 要求，实现简单 | JWT（无状态但撤销麻烦，MVP 无必要） |
+| 会话管理 | HttpOnly Cookie + itsdangerous 签名令牌（**不建服务端 session 表**，见 [DATA_MODEL.md](DATA_MODEL.md) §1） | 契合 FR-4.3 的 30 天 Cookie 要求，实现简单 | JWT（无状态但撤销麻烦，MVP 无必要） |
 | 文件上传 | FastAPI `UploadFile`（需 `python-multipart`） | 官方标准做法 | — |
 | API 测试 | pytest + httpx（FastAPI TestClient） | 见 §4.6 | — |
 | 代码规范 | Ruff（lint + format 合一） | 轻量、一个工具替代 flake8/black/isort | — |

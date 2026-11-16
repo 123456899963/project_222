@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-label="白茶占位背景">
+  <defs>
+    <radialGradient id="g" cx="30%" cy="35%" r="75%">
+      <stop offset="0%" stop-color="#d4d0c8" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#d4d0c8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#faf8f5"/>
+      <stop offset="100%" stop-color="#f2f0ec"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#g)"/>
+  <g fill="none" stroke="#8b7355" stroke-opacity="0.2" stroke-width="3">
+    <path d="M-100 720 C 300 640, 520 780, 900 680 S 1400 580, 1700 660"/>
+    <path d="M-100 800 C 320 720, 560 860, 940 760 S 1420 660, 1700 740"/>
+  </g>
+  <g transform="translate(300 420) rotate(12)" fill="#b9b3a6" fill-opacity="0.5">
+    <path d="M0 0 C 130 -30, 230 30, 270 130 C 165 165, 60 125, 0 0 Z"/>
+  </g>
+  <text x="80" y="840" font-family="serif" font-size="26" fill="#8b7355" fill-opacity="0.5">占位图 · 待实拍替换</text>
+</svg>

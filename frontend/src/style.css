@@ -7,55 +7,56 @@
 /* === 1. 品牌主色 === */
 :root {
   /* 茶褐（主色） */
-  --color-primary: #8B7355;
-  --color-primary-hover: #7A6548;
-  --color-primary-dark: #6B5740;
+  --color-primary: #8b7355;
+  --color-primary-hover: #7a6548;
+  --color-primary-dark: #6b5740;
 
-  /* 六大茶类标签色 */
-  --color-tea-green: #5CB85C;
-  --color-tea-white: #D4D0C8;
-  --color-tea-yellow: #E6C25B;
-  --color-tea-red: #C0392B;
-  --color-tea-oolong: #D35400;
-  --color-tea-dark: #4A3728;
+  /* 七大茶类标签色 */
+  --color-tea-green: #5cb85c;
+  --color-tea-white: #d4d0c8;
+  --color-tea-yellow: #e6c25b;
+  --color-tea-red: #c0392b;
+  --color-tea-oolong: #d35400;
+  --color-tea-dark: #4a3728;
+  --color-tea-reprocessed: #b98a9b;
 
   /* 背景色 */
-  --color-bg-page: #FAF8F5;
-  --color-bg-surface: #FFFFFF;
-  --color-bg-muted: #F5F1EC;
-  --color-bg-hero: #2C2418;
+  --color-bg-page: #faf8f5;
+  --color-bg-surface: #ffffff;
+  --color-bg-muted: #f5f1ec;
+  --color-bg-hero: #2c2418;
 
   /* 文字颜色 */
-  --color-text-primary: #2C2C2C;
-  --color-text-secondary: #6B6560;
-  --color-text-muted: #9A9590;
-  --color-text-inverse: #FFFFFF;
-  --color-text-link: #8B7355;
+  --color-text-primary: #2c2c2c;
+  --color-text-secondary: #6b6560;
+  --color-text-muted: #9a9590;
+  --color-text-inverse: #ffffff;
+  --color-text-link: #8b7355;
 
   /* 语义色 */
-  --color-success: #2E7D32;
-  --color-warning: #E68A00;
-  --color-error: #C62828;
-  --color-info: #1565C0;
+  --color-success: #2e7d32;
+  --color-warning: #e68a00;
+  --color-error: #c62828;
+  --color-info: #1565c0;
 
   /* 边框色 */
-  --color-border: #EDEBE8;
-  --color-border-light: #F5F1EC;
-  --color-border-dark: #D5D0CA;
+  --color-border: #edebe8;
+  --color-border-light: #f5f1ec;
+  --color-border-dark: #d5d0ca;
 
   /* === 2. 字体系统 === */
-  --font-sans: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-display: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
-  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  --font-sans: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-display: 'Noto Serif SC', 'Source Han Serif SC', Georgia, serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
 
   /* === 3. 字号 === */
-  --text-display: 3rem;     /* 48px */
-  --text-h1: 2rem;          /* 32px */
-  --text-h2: 1.5rem;        /* 24px */
-  --text-h3: 1.125rem;      /* 18px */
-  --text-body: 1rem;        /* 16px */
-  --text-small: 0.875rem;   /* 14px */
-  --text-caption: 0.75rem;  /* 12px */
+  --text-display: 3rem; /* 48px */
+  --text-h1: 2rem; /* 32px */
+  --text-h2: 1.5rem; /* 24px */
+  --text-h3: 1.125rem; /* 18px */
+  --text-body: 1rem; /* 16px */
+  --text-small: 0.875rem; /* 14px */
+  --text-caption: 0.75rem; /* 12px */
 
   /* === 4. 圆角 === */
   --radius-xs: 4px;
@@ -67,12 +68,24 @@
 
   /* === 5. 阴影 === */
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.06);
-  --shadow-card-hover: 0 12px 32px rgba(0, 0, 0, 0.10);
+  --shadow-card-hover: 0 12px 32px rgba(0, 0, 0, 0.1);
   --shadow-hero: 0 2px 12px rgba(0, 0, 0, 0.08);
   --shadow-dropdown: 0 4px 20px rgba(0, 0, 0, 0.12);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.20);
-}
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.2);
 
+  /* === 6. 动效与质感 === */
+  --motion-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --motion-duration-fast: 180ms;
+  --motion-duration-base: 320ms;
+  --motion-duration-slow: 600ms;
+  --motion-stagger: 40ms;
+
+  /* 纸纹层：透明度封顶 0.04，避免压暗实拍图 */
+  --paper-noise-opacity: 0.035;
+
+  /* 卡片柔光：暖白柔光 + soft-light 叠加，不改变文字对比度 */
+  --spotlight-color: rgba(255, 247, 234, 0.85);
+}
 
 /* === 全局重置 === */
 *,
@@ -81,7 +94,8 @@
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   background: var(--color-bg-page);
@@ -112,24 +126,95 @@ img {
   display: block;
 }
 
-
 /* === 工具类 === */
-.text-display { font-size: var(--text-display); font-weight: 700; line-height: 1.2; }
-.text-h1      { font-size: var(--text-h1); font-weight: 600; line-height: 1.3; }
-.text-h2      { font-size: var(--text-h2); font-weight: 600; line-height: 1.4; }
-.text-h3      { font-size: var(--text-h3); font-weight: 500; line-height: 1.4; }
-.text-body    { font-size: var(--text-body); line-height: 1.6; }
-.text-small   { font-size: var(--text-small); line-height: 1.5; }
-.text-caption { font-size: var(--text-caption); line-height: 1.5; }
-.font-display { font-family: var(--font-display); }
-.font-sans    { font-family: var(--font-sans); }
-.text-primary   { color: var(--color-primary); }
-.text-secondary { color: var(--color-text-secondary); }
-.text-muted     { color: var(--color-text-muted); }
-.text-error     { color: var(--color-error); }
-.text-success   { color: var(--color-success); }
+.text-display {
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: 1.2;
+}
+.text-h1 {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.text-h2 {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.text-h3 {
+  font-size: var(--text-h3);
+  font-weight: 500;
+  line-height: 1.4;
+}
+.text-body {
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+.text-small {
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+.text-caption {
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+.font-display {
+  font-family: var(--font-display);
+}
+.font-sans {
+  font-family: var(--font-sans);
+}
+.text-primary {
+  color: var(--color-primary);
+}
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+.text-muted {
+  color: var(--color-text-muted);
+}
+.text-error {
+  color: var(--color-error);
+}
+.text-success {
+  color: var(--color-success);
+}
 
-.bg-page    { background: var(--color-bg-page); }
-.bg-surface { background: var(--color-bg-surface); }
-.bg-muted   { background: var(--color-bg-muted); }
-.bg-primary { background: var(--color-primary); }
+.bg-page {
+  background: var(--color-bg-page);
+}
+.bg-surface {
+  background: var(--color-bg-surface);
+}
+.bg-muted {
+  background: var(--color-bg-muted);
+}
+.bg-primary {
+  background: var(--color-primary);
+}
+
+/* === 页面小标题（前台一级页统一使用） === */
+.page-kicker {
+  margin: 0 0 10px;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.page-kicker--center {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.page-kicker--center::before,
+.page-kicker--center::after {
+  content: '';
+  width: 32px;
+  height: 1px;
+  background: var(--color-border-dark);
+}

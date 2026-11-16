@@ -1,8 +1,7 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
-
 
 # 创建同步引擎（本项目规模下同步写法更易理解）
 engine = create_engine(
@@ -16,6 +15,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     """所有 ORM 模型的基类"""
+
     pass
 
 

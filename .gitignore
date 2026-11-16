@@ -37,7 +37,7 @@ dist/
 Thumbs.db
 
 # === Project Specific ===
-uploads/          # FastAPI 图片上传目录
+# backend/uploads/ 为运行期素材目录，按交付要求纳入版本管理（2026-11-10 决策），故不忽略
 *.tsbuildinfo
 
 # === Debug Logs ===
@@ -49,3 +49,11 @@ yarn-error.log*
 # === Temp ===
 *.tmp
 *.bak
+
+# === AI Agent Temp ===
+.git_backup_prd_only/
+.trae-html-share-packages/
+# 受限环境下的临时 Vitest/Vite 绕过文件（不参与构建，可随时删除）
+.tmp-vitest.config.mjs
+.tmp-vitest.mjs
+.tmp-vite-preload.cjs

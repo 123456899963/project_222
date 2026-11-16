@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="预置头像：盖碗">
+  <circle cx="100" cy="100" r="100" fill="#F1F0EA"/>
+  <path d="M64 88h72c0 24-16 40-36 40S64 112 64 88z" fill="#6B7F6E" opacity=".2"/>
+  <path d="M64 88h72" stroke="#6B7F6E" stroke-width="5" stroke-linecap="round"/>
+  <path d="M70 74h60" stroke="#6B7F6E" stroke-width="5" stroke-linecap="round"/>
+  <path d="M100 60v10" stroke="#6B7F6E" stroke-width="5" stroke-linecap="round"/>
+  <path d="M86 128h28l-4 10H90z" fill="#6B7F6E" opacity=".35"/>
+</svg>

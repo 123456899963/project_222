@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="预置头像：茶壶">
+  <circle cx="100" cy="100" r="100" fill="#F4EFEA"/>
+  <path d="M62 96h64v20a32 32 0 0 1-64 0z" fill="#A89098" opacity=".28"/>
+  <path d="M62 96h64v20a32 32 0 0 1-64 0z" stroke="#A89098" stroke-width="4" fill="none" stroke-linejoin="round"/>
+  <path d="M126 102c14 0 22 6 22 14s-8 12-22 10" stroke="#A89098" stroke-width="4" fill="none"/>
+  <path d="M74 88c6-8 14-12 22-12s16 4 22 12" stroke="#A89098" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M58 84c10 0 16 4 16 10" stroke="#A89098" stroke-width="4" fill="none" stroke-linecap="round"/>
+</svg>
